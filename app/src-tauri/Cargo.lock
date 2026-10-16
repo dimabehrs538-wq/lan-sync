@@ -4320,7 +4320,7 @@ dependencies = [
 
 [[package]]
 name = "teamsync"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "rand 0.8.8",
  "serde",
