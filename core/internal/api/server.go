@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -85,7 +86,7 @@ func (s *Server) cors(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(204)
 			return
@@ -116,7 +117,38 @@ func writeJSON(w http.ResponseWriter, v any) {
 func writeErr(w http.ResponseWriter, code int, err error) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": FriendlyError(err)})
+}
+
+// FriendlyError 把底层错误转换为中文提示。
+func FriendlyError(err error) string {
+	var ae *stclient.APIError
+	if errors.As(err, &ae) {
+		body := strings.TrimSpace(ae.Body)
+		switch {
+		case ae.Status == 404:
+			return "找不到对应的文件夹或设备，可能已被移除"
+		case ae.Status == 403 || ae.Status == 401:
+			return "同步引擎拒绝访问，请重启软件"
+		case strings.Contains(body, "device ID"):
+			return "设备 ID 格式不正确，请检查后重试"
+		case strings.Contains(body, "path"):
+			return "路径无效或无权限访问：" + body
+		}
+		return fmt.Sprintf("同步引擎返回错误（%d）：%s", ae.Status, body)
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "connection refused"), strings.Contains(msg, "actively refused"), strings.Contains(msg, "EOF"), strings.Contains(msg, "connection reset"):
+		return "同步引擎暂时不可用（可能正在重启），请稍后重试"
+	case strings.Contains(msg, "deadline exceeded"), strings.Contains(msg, "Timeout"):
+		return "同步引擎响应超时，请稍后重试"
+	case strings.Contains(msg, "permission denied"), strings.Contains(msg, "Access is denied"):
+		return "没有权限访问该路径"
+	case strings.Contains(msg, "invalid character"), strings.Contains(msg, "cannot unmarshal"):
+		return "请求格式不正确"
+	}
+	return msg
 }
 
 func respond(w http.ResponseWriter, v any, err error) {

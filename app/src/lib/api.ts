@@ -22,6 +22,10 @@ export interface UIEvent { type: string; message?: string; notify: boolean; time
 
 let core: CoreInfo | null = null;
 
+const HTTP_CN: Record<number, string> = {
+  400: "请求参数不正确", 401: "授权已失效，请重启软件", 404: "找不到对应的项目，可能已被移除", 500: "内核服务出错，请稍后重试", 502: "同步引擎暂时不可用", 503: "同步引擎暂时不可用",
+};
+
 export async function getCore(): Promise<CoreInfo> {
   if (core) return core;
   if (isTauri()) core = await invoke<CoreInfo>("core_info");
@@ -35,13 +39,19 @@ export async function getCore(): Promise<CoreInfo> {
 
 export async function api<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
   const c = await getCore();
-  const r = await fetch(`http://127.0.0.1:${c.port}${path}`, {
-    method,
-    headers: { Authorization: `Bearer ${c.token}`, "Content-Type": "application/json" },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let r: Response;
+  try {
+    r = await fetch(`http://127.0.0.1:${c.port}${path}`, {
+      method,
+      headers: { Authorization: `Bearer ${c.token}`, "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    // 网络层失败（内核未运行/重启中/被拦截），浏览器只给 "Failed to fetch"
+    throw new Error("无法连接内核服务，请稍后重试");
+  }
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error((data as { error?: string }).error || `HTTP ${r.status}`);
+  if (!r.ok) throw new Error((data as { error?: string }).error || HTTP_CN[r.status] || `请求失败（HTTP ${r.status}）`);
   return data as T;
 }
 

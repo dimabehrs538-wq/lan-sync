@@ -62,6 +62,11 @@ wait_for "t C invites | grep -q $FID" "A 编辑成员加入 C 后，C 收到邀�
 t C accept-invite "$FID" "$IA" "$W/C-设计" >/dev/null
 wait_for "[ -f '$W/C-设计/接口.md' ]" "C 接受并同步" 90
 
+# ---- 取消最后的成员：文件夹变为仅本机（回归：members=[]）----
+FID2=$("$T" add-folder 临时 "$W/A-tmp" "$IB" --home "$W/A" | sed -n 's/.*"id": "\(.*\)".*/\1/p' | head -1)
+t A share "$FID2" | grep -q '"ok": true' && echo "✔ 取消最后一位成员成功"
+t A folders | python3 -c "import json,sys; f=[x for x in json.load(sys.stdin) if x['id']=='$FID2'][0]; sys.exit(0 if f['members']==[] else 1)" && echo "✔ 文件夹变为仅本机"
+
 # ---- 移除（仅停止同步）----
 t B remove-folder "$FID" >/dev/null
 ! t B folders | grep -q "$FID" && echo "✔ B 已移除文件夹"
@@ -81,5 +86,5 @@ t C remove-folder "$FID" --delete-files | grep -q '"trashed": true' && echo "✔
 [ ! -e "$W/C-设计" ] && echo "✔ C 本地目录已删除"
 ls "$W/C-xdg/Trash/files/" | grep -q "C-设计" && echo "✔ 回收站中可找回"
 sleep 8
-[ -f "$W/A-docs/接口.md" ] && [ -f "$W/A-docs/新文件.md" ] && echo "✔ A 的文件不受影响"
+[ -f "$W/A-docs/接口.md" ] && [ -f "$W/A-docs/新文件.md" ] && echo "✔ A 的文件不受影响" || { echo "✘ A 文件受影响"; ls -la "$W/A-docs"; exit 1; }
 echo "全部通过"

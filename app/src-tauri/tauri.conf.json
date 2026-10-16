@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "TeamSync",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "com.teamsync.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -11,7 +11,14 @@
   },
   "app": {
     "windows": [
-      { "label": "main", "title": "团队同步", "width": 980, "height": 680, "minWidth": 760, "minHeight": 520 }
+      {
+        "label": "main",
+        "title": "团队同步",
+        "width": 980,
+        "height": 680,
+        "minWidth": 760,
+        "minHeight": 520
+      }
     ],
     "security": {
       "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:*; style-src 'self' 'unsafe-inline'"
@@ -20,9 +27,39 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
-    "externalBin": ["binaries/teamsyncd", "binaries/syncthing"],
-    "resources": { "binaries/SYNCTHING-LICENSE.txt": "SYNCTHING-LICENSE.txt" },
-    "windows": { "nsis": { "languages": ["SimpChinese"], "displayLanguageSelector": false } }
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "externalBin": [
+      "binaries/teamsyncd",
+      "binaries/syncthing"
+    ],
+    "resources": {
+      "binaries/SYNCTHING-LICENSE.txt": "SYNCTHING-LICENSE.txt"
+    },
+    "windows": {
+      "nsis": {
+        "languages": [
+          "SimpChinese"
+        ],
+        "displayLanguageSelector": false
+      }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDBEMDYyODYxNjM2RDlDMkIKUldRcm5HMWpZU2dHRGI4Y0JoVGR4SXNpR2k4RXhvOWVTc09ibVdhUjhrSElXUXhQdTYxakg2R08K",
+      "endpoints": [
+        "https://github.com/dimabehrs538-wq/lan-sync/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

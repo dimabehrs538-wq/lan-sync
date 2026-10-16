@@ -195,10 +195,11 @@ func serve(args []string) {
 	<-sig
 	log.Print("正在关闭...")
 	cancel()
+	// 先停 syncthing，再关闭本地 API：API 端口关闭即表示 syncthing 已退出（安装更新时据此判断）
+	eng.Stop(10 * time.Second)
 	sctx, scancel := context.WithTimeout(context.Background(), 3*time.Second)
 	hs.Shutdown(sctx)
 	scancel()
-	eng.Stop(10 * time.Second)
 	os.Remove(infoPath)
 }
 

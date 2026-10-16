@@ -63,9 +63,30 @@ app/icon-src/         图标源文件（icon.svg 应用图标、tray.svg 托盘�
 
 1. 打开仓库的 **Actions → 构建 Windows 安装包**，点开最新一次成功的运行；
 2. 在页面底部 **Artifacts** 下载 `TeamSync-windows-x64`（zip，内含 NSIS 安装程序 `TeamSync_x.y.z_x64-setup.exe` 和 MSI 包 `TeamSync_x.y.z_x64_en-US.msi`）；
-3. 推送 `v*` 标签（如 `git tag v0.1.0 && git push origin v0.1.0`）时会自动创建 GitHub Release 并附带安装包。
+3. 正式版本请到 [Releases](https://github.com/dimabehrs538-wq/lan-sync/releases/latest) 下载。
 
 > 安装包暂未代码签名，首次运行 Windows SmartScreen 可能提示"未知发布者"，点"更多信息 → 仍要运行"即可。
+
+## 发布新版本与自动更新
+
+TeamSync 使用 `tauri-plugin-updater` 从 GitHub Releases 自动更新：启动 15 秒后及每 4 小时检查一次
+`https://github.com/dimabehrs538-wq/lan-sync/releases/latest/download/latest.json`（设置页可关闭自动检查或手动"检查更新"）。
+发现新版本时弹出中文对话框（版本号 + 更新说明），点"立即更新"后下载（带进度条）→ 停止内核与 Syncthing → 运行 NSIS 安装程序（passive 模式）→ 自动重启。
+
+发布步骤：
+
+1. 把版本号同步改到三处：`app/package.json`、`app/src-tauri/Cargo.toml`、`app/src-tauri/tauri.conf.json`（工作流会检查标签与 `tauri.conf.json` 一致）；
+2. 提交并推送到 `main`；
+3. 打带说明的标签并推送，标签说明即更新对话框里显示的"更新说明"：
+   ```bash
+   git tag -a v0.2.1 -m "修复了……"
+   git push origin v0.2.1
+   ```
+4. Actions 会构建签名的 NSIS/MSI，生成 `latest.json`，并创建 Release（附安装包、`.sig` 签名和 `latest.json`）。已安装的旧版本随后会提示更新。
+
+签名密钥：更新包用 `npx tauri signer generate` 生成的密钥签名，公钥写在 `tauri.conf.json` 的 `plugins.updater.pubkey`，
+私钥及其密码保存在仓库 Secrets `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`（另有离线备份，切勿提交到仓库）。
+**私钥丢失后已安装的客户端将无法再自动更新**，只能手动重装。
 
 ## Windows 构建（主平台）
 
@@ -80,7 +101,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build-core.ps1
 cd app
 npm install
 npx tauri build
-# 产物：app\src-tauri\target\release\bundle\nsis\TeamSync_0.1.0_x64-setup.exe
+# 产物：app\src-tauri\target\release\bundle\nsis\TeamSync_0.2.0_x64-setup.exe
 ```
 
 开发调试：`cd app && npx tauri dev`。

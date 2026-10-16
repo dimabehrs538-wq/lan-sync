@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Bell, FolderOpen, Info, Laptop, Moon, Power, Save, ShieldCheck, Sun } from "lucide-react";
+import { ArrowUpCircle, Bell, FolderOpen, Info, Laptop, Moon, Power, Save, ShieldCheck, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import { PageHeader } from "@/components/common";
 import { api, formatUptime, isTauri } from "@/lib/api";
 import { useData } from "@/lib/store";
 import { cn } from "@/lib/utils";
+import { useUpdater } from "@/lib/updater";
 
 function Row({ icon: Icon, title, desc, children }: { icon: typeof Bell; title: string; desc: string; children: React.ReactNode }) {
   return (
@@ -25,6 +26,7 @@ function Row({ icon: Icon, title, desc, children }: { icon: typeof Bell; title: 
 export default function Settings() {
   const { theme, setTheme } = useTheme();
   const { status, settings, run } = useData();
+  const up = useUpdater();
   const [base, setBase] = useState("");
   useEffect(() => { if (settings) setBase(settings.defaultBaseDir); }, [settings?.defaultBaseDir]);
   const [auto, setAuto] = useState(false);
@@ -79,6 +81,22 @@ export default function Settings() {
         </CardContent>
       </Card>
       <Card className="mt-4">
+        <CardHeader><CardTitle className="flex items-center gap-2 text-sm"><ArrowUpCircle className="size-4 text-sky-600" />软件更新</CardTitle></CardHeader>
+        <CardContent>
+          <div className="flex items-center gap-4 py-2">
+            <div className="flex-1">
+              <div className="text-sm font-medium">当前版本 {up.version || "-"}</div>
+              <div className="text-xs text-muted-foreground">从 GitHub Releases 获取更新，安装包经过签名校验</div>
+            </div>
+            <Button variant="outline" disabled={up.checking} onClick={up.checkNow}><ArrowUpCircle className={up.checking ? "animate-spin" : ""} />{up.checking ? "检查中…" : "检查更新"}</Button>
+          </div>
+          <Separator />
+          <Row icon={ArrowUpCircle} title="自动检查更新" desc="启动时及每隔 4 小时检查一次，有新版本时提示">
+            <Switch checked={up.autoCheck} onCheckedChange={up.setAutoCheck} />
+          </Row>
+        </CardContent>
+      </Card>
+      <Card className="mt-4">
         <CardHeader><CardTitle className="flex items-center gap-2 text-sm"><ShieldCheck className="size-4 text-emerald-600" />网络与隐私</CardTitle></CardHeader>
         <CardContent className="space-y-2 text-sm text-muted-foreground">
           <p>仅在局域网内同步：已关闭全局发现、中继服务器和 NAT 穿透，数据不经过任何外部服务器，设备之间全程 TLS 加密。</p>
@@ -88,7 +106,7 @@ export default function Settings() {
       <Card className="mt-4">
         <CardHeader><CardTitle className="flex items-center gap-2 text-sm"><Info className="size-4" />关于</CardTitle></CardHeader>
         <CardContent className="grid grid-cols-2 gap-y-2 text-sm">
-          <span className="text-muted-foreground">应用版本</span><span>TeamSync 0.1.0</span>
+          <span className="text-muted-foreground">应用版本</span><span>TeamSync {up.version || "-"}</span>
           <span className="text-muted-foreground">同步引擎</span><span>Syncthing {status?.syncthingVersion ?? "-"}（MPL-2.0）</span>
           <span className="text-muted-foreground">引擎运行时间</span><span>{status?.uptime ? formatUptime(status.uptime) : "-"}</span>
         </CardContent>

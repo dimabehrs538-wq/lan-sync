@@ -27,6 +27,31 @@ fn core_info(state: State<AppState>) -> CoreInfo {
     state.core.clone()
 }
 
+/// 安装更新前调用：优雅停止内核（内核会先通过 REST 关闭 syncthing 再退出），
+/// 等到内核端口关闭（表示 syncthing 也已退出）后返回，避免安装程序覆盖文件时被占用。
+#[tauri::command]
+async fn stop_core(state: State<'_, AppState>) -> Result<bool, String> {
+    let child = state.child.lock().unwrap().take();
+    let port = state.core.port;
+    if let Some(child) = child {
+        drop(child); // 关闭 stdin -> 内核优雅退出
+    }
+    for _ in 0..100 {
+        if std::net::TcpStream::connect_timeout(
+            &([127, 0, 0, 1], port).into(),
+            std::time::Duration::from_millis(200),
+        )
+        .is_err()
+        {
+            // 再给进程一点时间退出
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            return Ok(true);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    Ok(false)
+}
+
 /// 前端根据同步状态更新托盘提示
 #[tauri::command]
 fn set_tray_status(app: AppHandle, text: String) {
@@ -102,8 +127,11 @@ pub fn run() {
             core: core.clone(),
             child: Mutex::new(None),
         })
-        .invoke_handler(tauri::generate_handler![core_info, set_tray_status])
+        .plugin(tauri_plugin_process::init())
+        .invoke_handler(tauri::generate_handler![core_info, set_tray_status, stop_core])
         .setup(move |app| {
+            #[cfg(desktop)]
+            app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
             let handle = app.handle().clone();
             let child = spawn_core(&handle, &core);
             *app.state::<AppState>().child.lock().unwrap() = child;
