@@ -357,8 +357,19 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 // RunEventBridge 订阅 Syncthing 事件，翻译成中文 UIEvent 并广播。
 func (s *Server) RunEventBridge(ctx context.Context) {
 	names := newNameCache(s.C)
+	seenPending := map[string]bool{}
 	s.C.WatchEvents(ctx, func(e stclient.Event) {
 		if ue, ok := Translate(e, names.Lookup(ctx)); ok {
+			// Syncthing 会周期性重复报告待确认设备，同一设备只提示一次
+			if e.Type == "PendingDevicesChanged" {
+				if m, _ := ue.Data.(map[string]any); m != nil {
+					id, _ := m["deviceID"].(string)
+					if seenPending[id] {
+						return
+					}
+					seenPending[id] = true
+				}
+			}
 			s.Publish(ue)
 		}
 	})

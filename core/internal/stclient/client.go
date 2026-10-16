@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -16,10 +17,19 @@ type Client struct {
 	Base   string
 	APIKey string
 	HTTP   *http.Client
+	// EventTypes 订阅的事件类型；默认事件流不含 Local/RemoteChangeDetected，必须显式订阅
+	EventTypes []string
+}
+
+// DefaultEventTypes 是内核关心的事件。
+var DefaultEventTypes = []string{
+	"DeviceConnected", "DeviceDisconnected", "PendingDevicesChanged", "PendingFoldersChanged",
+	"RemoteChangeDetected", "LocalChangeDetected", "FolderSummary", "StateChanged",
+	"FolderCompletion", "FolderErrors", "ConfigSaved",
 }
 
 func New(base, key string) *Client {
-	return &Client{Base: base, APIKey: key, HTTP: &http.Client{Timeout: 30 * time.Second}}
+	return &Client{Base: base, APIKey: key, HTTP: &http.Client{Timeout: 30 * time.Second}, EventTypes: DefaultEventTypes}
 }
 
 type APIError struct {
@@ -240,6 +250,9 @@ func (c *Client) Restart(ctx context.Context) error {
 func (c *Client) Events(ctx context.Context, since int, timeout time.Duration) ([]Event, error) {
 	var ev []Event
 	q := url.Values{"since": {fmt.Sprint(since)}, "timeout": {fmt.Sprint(int(timeout.Seconds()))}}
+	if len(c.EventTypes) > 0 {
+		q.Set("events", strings.Join(c.EventTypes, ","))
+	}
 	cl := *c
 	cl.HTTP = &http.Client{Timeout: timeout + 10*time.Second}
 	err := cl.Do(ctx, "GET", "/rest/events", q, nil, &ev)
