@@ -4,10 +4,16 @@
 
 - 同步引擎：内嵌官方 [Syncthing](https://syncthing.net) v2.1.6（不自研同步协议），由 Go 内核通过 REST + 事件 API 控制（思路同 SyncTrayzor）
 - 内核：Go（`core/`，`teamsyncd`），作为 Tauri sidecar 运行，对前端暴露本地 HTTP API
-- 桌面端：Tauri v2 + 原生 JS（`app/`），简体中文界面，托盘、通知、开机自启
+- 桌面端：Tauri v2 + React 19 + TypeScript + Vite + Tailwind CSS v4 + shadcn/ui + lucide-react（`app/`），简体中文界面，浅色/深色主题，托盘、通知、开机自启
 - 默认纯内网：关闭全局发现、中继、NAT 穿透和使用统计，只用局域网广播发现同事
 
-![概览](docs/screenshot-overview.png)
+| 概览 | 团队文件夹 |
+|---|---|
+| ![概览](docs/screenshot-overview.png) | ![文件夹](docs/screenshot-folders.png) |
+| **成员 / 配对** | **冲突中心** |
+| ![成员](docs/screenshot-members.png) | ![冲突](docs/screenshot-conflicts.png) |
+| **设置** | **深色主题** |
+| ![设置](docs/screenshot-settings.png) | ![深色](docs/screenshot-overview-dark.png) |
 
 ## 功能（MVP）
 
@@ -31,7 +37,7 @@ core/                 Go 内核（无第三方依赖）
   internal/conflict/  冲突副本扫描与处理
   internal/api/       给前端的本地 HTTP API + SSE 事件（中文翻译）
 app/                  Tauri v2 桌面端
-  src/                前端（index.html 在 app/ 下）
+  src/                前端 React + TS（pages/ 各页面，components/ui/ 为 shadcn 组件，lib/ 为 API 客户端与数据状态）
   src-tauri/          Rust 壳：启动 sidecar、托盘、通知、自启
   src-tauri/binaries/ sidecar 二进制（脚本生成，不入库）
 scripts/              下载 syncthing、编译内核、两节点端到端测试
@@ -61,6 +67,8 @@ npx tauri build
 ```
 
 开发调试：`cd app && npx tauri dev`。
+
+前端单独调试：先用 CLI 跑一个内核（`teamsyncd serve`），再 `cd app && npm run dev`，浏览器打开 `http://localhost:5173/?port=<端口>&token=<token>`（端口和 token 见数据目录下的 `daemon.json`）。添加 shadcn 组件：`npx shadcn@latest add <组件名>`。
 
 **防火墙**：首次运行 Windows 会询问是否允许 syncthing 访问网络，请勾选"专用网络"。或管理员执行：
 
