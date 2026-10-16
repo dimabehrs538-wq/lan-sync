@@ -33,6 +33,7 @@ const usage = `teamsyncd - 内网团队文件夹同步内核
   teamsyncd folders                    列出团队文件夹
   teamsyncd add-folder <名称> <路径> [设备ID...]  创建团队文件夹并共享给指定成员（不指定=全部成员）
   teamsyncd share <文件夹ID> [设备ID...]          设置文件夹共享成员
+  teamsyncd remove-folder <文件夹ID> [--delete-files] [--permanent]  仅在本机移除文件夹（可同时删除本地文件，默认进回收站）
   teamsyncd reinvite <文件夹ID> <设备ID>          重新邀请成员
   teamsyncd invites                               查看收到的文件夹邀请
   teamsyncd accept-invite <文件夹ID> <邀请人设备ID> <本地路径>
@@ -260,6 +261,27 @@ func runCLI(cmd string, args []string, home string) error {
 			return err
 		}
 		return call("PUT", "/api/folders/"+args[0]+"/members", map[string]any{"members": append([]string{}, args[1:]...)})
+	case "remove-folder":
+		var id string
+		q := []string{}
+		for _, a := range args {
+			switch a {
+			case "--delete-files":
+				q = append(q, "deleteFiles=1")
+			case "--permanent":
+				q = append(q, "permanent=1")
+			default:
+				id = a
+			}
+		}
+		if id == "" {
+			return fmt.Errorf("缺少文件夹 ID\n\n%s", usage)
+		}
+		path := "/api/folders/" + id
+		if len(q) > 0 {
+			path += "?" + strings.Join(q, "&")
+		}
+		return call("DELETE", path, nil)
 	case "reinvite":
 		if err := need(2); err != nil {
 			return err

@@ -38,8 +38,15 @@ func TestInvitationsIgnoreAndReinvite(t *testing.T) {
 	if len(FilterInvitations(p, nil, nil, st2)) != 0 || st2.Get().DefaultBaseDir != filepath.Join(dir, "base") {
 		t.Fatal("not persisted")
 	}
-	// 重新邀请 = 新的邀请时间 -> 重新出现
+	// 重连导致邀请时间变化：仍然隐藏
 	p2 := pending("f1", "DEV", "设计:文档", "2026-10-16T11:00:00Z")
+	if len(FilterInvitations(p2, nil, nil, st2)) != 0 {
+		t.Fatal("reconnect must not resurface ignored invite")
+	}
+	// 重新邀请 = 对方先撤回（removed 事件）再邀请 -> 重新出现
+	if !st2.UnignorePair("f1", "DEV") || st2.UnignorePair("f1", "DEV") {
+		t.Fatal("unignore pair")
+	}
 	if len(FilterInvitations(p2, nil, nil, st2)) != 1 {
 		t.Fatal("re-invite should resurface")
 	}

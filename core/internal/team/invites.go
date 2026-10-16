@@ -18,8 +18,9 @@ type Settings struct {
 	Ignored        []IgnoredInvite `json:"ignored"`
 }
 
-// IgnoredInvite 记录被忽略的某一次邀请（文件夹 + 邀请人 + 邀请时间）。
-// 对方重新邀请会产生新的邀请时间，因此会重新出现。
+// IgnoredInvite 记录被忽略（或本机已移除）的文件夹邀请（文件夹 + 邀请人）。
+// 对方"重新邀请"时会先撤回再发出邀请，内核收到撤回事件（PendingFoldersChanged.removed）
+// 后清除这条记录，新的邀请就会重新出现；仅重连不会清除。
 type IgnoredInvite struct {
 	FolderID  string `json:"folderID"`
 	DeviceID  string `json:"deviceID"`
@@ -62,11 +63,11 @@ func (st *Store) Update(fn func(*Settings)) error {
 	return os.WriteFile(st.path, b, 0o600)
 }
 
-func (st *Store) IsIgnored(folderID, deviceID, offerTime string) bool {
+func (st *Store) IsIgnored(folderID, deviceID string) bool {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	for _, i := range st.s.Ignored {
-		if i.FolderID == folderID && i.DeviceID == deviceID && i.OfferTime == offerTime {
+		if i.FolderID == folderID && i.DeviceID == deviceID {
 			return true
 		}
 	}
@@ -83,6 +84,23 @@ func (st *Store) Ignore(folderID, deviceID, offerTime string) error {
 		}
 		s.Ignored = append(out, IgnoredInvite{folderID, deviceID, offerTime})
 	})
+}
+
+// UnignorePair 清除某个邀请人对某文件夹的忽略记录（对方撤回邀请时调用）；返回是否有变化。
+func (st *Store) UnignorePair(folderID, deviceID string) bool {
+	if !st.IsIgnored(folderID, deviceID) {
+		return false
+	}
+	_ = st.Update(func(s *Settings) {
+		out := s.Ignored[:0]
+		for _, i := range s.Ignored {
+			if !(i.FolderID == folderID && i.DeviceID == deviceID) {
+				out = append(out, i)
+			}
+		}
+		s.Ignored = out
+	})
+	return true
 }
 
 func (st *Store) Unignore(folderID string) error {
@@ -117,7 +135,7 @@ func FilterInvitations(pending map[string]stclient.PendingFolder, have map[strin
 			continue
 		}
 		for dev, o := range p.OfferedBy {
-			if st.IsIgnored(fid, dev, o.Time) {
+			if st.IsIgnored(fid, dev) {
 				continue
 			}
 			label := o.Label
@@ -172,4 +190,55 @@ func (s *Service) Invitations(ctx context.Context, st *Store) ([]Invitation, err
 		}
 	}
 	return FilterInvitations(pending, have, names, st), nil
+}
+
+// ReconnectPause 是移除文件夹后暂停连接的时长（测试中可调小）。
+var ReconnectPause = time.Second
+
+// RemoveResult 是移除文件夹的结果。
+type RemoveResult struct {
+	Path         string `json:"path"`
+	FilesDeleted bool   `json:"filesDeleted"`
+	Trashed      bool   `json:"trashed"` // true=已移到回收站
+}
+
+// RemoveFolder 仅在本机移除团队文件夹：从 Syncthing 配置删除（其他成员不受影响），
+// 并把当前所有共享者记入忽略，避免立刻又作为邀请/自动文件夹出现；对方重新邀请时会再次出现。
+// deleteFiles 为 true 时把本地文件移到回收站（失败且 allowPermanent 时永久删除）。
+func (s *Service) RemoveFolder(ctx context.Context, st *Store, folderID string, deleteFiles, allowPermanent bool, trashFn func(string, bool) (bool, error)) (RemoveResult, error) {
+	f, err := s.C.Folder(ctx, folderID)
+	if err != nil {
+		return RemoveResult{}, err
+	}
+	my, _ := s.MyID(ctx)
+	if err := s.C.Do(ctx, "DELETE", "/rest/config/folders/"+folderID, nil, nil, nil); err != nil {
+		return RemoveResult{}, err
+	}
+	for _, d := range f.Devices {
+		if d.DeviceID != my {
+			_ = st.Ignore(folderID, d.DeviceID, "removed")
+		}
+	}
+	// 短暂暂停/恢复这些成员的连接，让对方重新发送集群配置：本机会记下一条（已忽略的）待处理邀请，
+	// 这样对方之后"重新邀请"时先撤回再邀请，内核能收到撤回事件并重新显示邀请。
+	for _, d := range f.Devices {
+		if d.DeviceID != my {
+			_ = s.C.PatchDevice(ctx, d.DeviceID, map[string]any{"paused": true})
+		}
+	}
+	time.Sleep(ReconnectPause)
+	for _, d := range f.Devices {
+		if d.DeviceID != my {
+			_ = s.C.PatchDevice(ctx, d.DeviceID, map[string]any{"paused": false})
+		}
+	}
+	res := RemoveResult{Path: f.Path}
+	if deleteFiles {
+		trashed, err := trashFn(f.Path, allowPermanent)
+		if err != nil {
+			return res, err
+		}
+		res.FilesDeleted, res.Trashed = true, trashed
+	}
+	return res, nil
 }

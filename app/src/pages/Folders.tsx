@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
-import { Check, FolderInput, FolderOpen, FolderPlus, FolderSync, History, Mail, Pause, Play, RefreshCw, Send, UserCog, Users, X } from "lucide-react";
+import { toast } from "sonner";
+import { AlertTriangle, Check, FolderInput, FolderMinus, MoreHorizontal, Trash2, FolderOpen, FolderPlus, FolderSync, History, Mail, Pause, Play, RefreshCw, Send, UserCog, Users, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -139,9 +141,71 @@ function AcceptDialog({ inv, onClose }: { inv: Invitation | null; onClose: () =>
   );
 }
 
+function RemoveDialog({ folder, onClose }: { folder: Folder | null; onClose: () => void }) {
+  const { run } = useData();
+  const [mode, setMode] = useState<"keep" | "delete">("keep");
+  const [confirm, setConfirm] = useState("");
+  const [permanent, setPermanent] = useState(false);
+  useEffect(() => { if (folder) { setMode("keep"); setConfirm(""); setPermanent(false); } }, [folder]);
+  const name = folder?.label || folder?.id || "";
+  const ok = mode === "keep" || confirm.trim() === name;
+  const Option = ({ v, icon, title, desc, danger }: { v: "keep" | "delete"; icon: React.ReactNode; title: string; desc: string; danger?: boolean }) => (
+    <button type="button" onClick={() => setMode(v)} className={cn("flex w-full items-start gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-muted/50",
+      mode === v && (danger ? "border-red-500 bg-red-500/5 ring-2 ring-red-500/20" : "border-primary ring-2 ring-primary/15"))}>
+      <span className={cn("mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border", mode === v && (danger ? "border-red-500" : "border-primary"))}>
+        {mode === v && <span className={cn("size-2 rounded-full", danger ? "bg-red-500" : "bg-primary")} />}
+      </span>
+      <span className="flex-1">
+        <span className={cn("flex items-center gap-1.5 text-sm font-medium", danger && "text-red-600")}>{icon}{title}</span>
+        <span className="mt-0.5 block text-xs text-muted-foreground">{desc}</span>
+      </span>
+    </button>
+  );
+  return (
+    <Dialog open={!!folder} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>移除「{name}」</DialogTitle>
+          <DialogDescription>只影响本机：其他成员会继续同步这个文件夹，他们那里会显示你“未加入”。之后对方重新邀请时，会以邀请的形式出现。</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2">
+          <Option v="keep" icon={<FolderMinus className="size-4" />} title="仅停止同步（保留本地文件）" desc={`本机不再同步，${folder?.path ?? ""} 中的文件原样保留。`} />
+          <Option v="delete" danger icon={<Trash2 className="size-4" />} title="同时删除本地文件" desc="停止同步并把本机的这个文件夹移到回收站。其他成员的文件不受影响。" />
+        </div>
+        {mode === "delete" && (
+          <div className="space-y-3 rounded-lg border border-red-500/30 bg-red-500/5 p-3">
+            <div className="flex gap-2 text-xs text-red-700 dark:text-red-400"><AlertTriangle className="size-4 shrink-0" />将删除 <span className="font-mono break-all">{folder?.path}</span> 及其中所有文件。</div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">请输入文件夹名称 <b>{name}</b> 以确认</Label>
+              <Input value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder={name} autoFocus />
+            </div>
+            <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+              <Checkbox checked={permanent} onCheckedChange={(v) => setPermanent(!!v)} />
+              回收站不可用时直接永久删除（无法恢复）
+            </label>
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>取消</Button>
+          <Button disabled={!ok} className={mode === "delete" ? "bg-red-600 text-white hover:bg-red-700" : ""} onClick={async () => {
+            if (!folder) return;
+            const q = mode === "delete" ? `?deleteFiles=1${permanent ? "&permanent=1" : ""}` : "";
+            let msg = "";
+            const done = await run(async () => {
+              const r = await api<{ filesDeleted: boolean; trashed: boolean }>("DELETE", `/api/folders/${folder.id}${q}`);
+              msg = !r.filesDeleted ? `已移除「${name}」，本地文件已保留` : r.trashed ? `已移除「${name}」，本地文件已移到回收站` : `已移除「${name}」，本地文件已永久删除`;
+            });
+            if (done) { toast.success(msg); onClose(); }
+          }}>{mode === "delete" ? <><Trash2 />移除并删除文件</> : <><FolderMinus />移除</>}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 const MEMBER_STATE: Record<FolderMember["remoteState"], [string, string]> = {
   valid: ["已加入", "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"],
-  notSharing: ["待接受", "bg-amber-500/10 text-amber-700 dark:text-amber-400"],
+  notSharing: ["未加入", "bg-amber-500/10 text-amber-700 dark:text-amber-400"],
   paused: ["已暂停", "bg-zinc-500/10 text-muted-foreground"],
   unknown: ["离线", "bg-zinc-500/10 text-muted-foreground"],
 };
@@ -168,6 +232,7 @@ export default function Folders() {
   const [adding, setAdding] = useState(false);
   const [accepting, setAccepting] = useState<Invitation | null>(null);
   const [editing, setEditing] = useState<Folder | null>(null);
+  const [removing, setRemoving] = useState<Folder | null>(null);
 
   return (
     <>
@@ -244,6 +309,15 @@ export default function Folders() {
                       <Tooltip><TooltipTrigger asChild>
                         <Button variant="ghost" size="icon" onClick={() => run(() => api("POST", `/api/folders/${f.id}/${f.paused ? "resume" : "pause"}`), f.paused ? "已恢复同步" : "已暂停同步")}>{f.paused ? <Play /> : <Pause />}</Button>
                       </TooltipTrigger><TooltipContent>{f.paused ? "恢复同步" : "暂停同步"}</TooltipContent></Tooltip>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal /></Button></DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-40">
+                          <DropdownMenuItem onClick={() => setEditing(f)}><UserCog />管理成员</DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => run(() => api("POST", `/api/folders/${f.id}/scan`), "已开始扫描")}><RefreshCw />立即扫描</DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem variant="destructive" onClick={() => setRemoving(f)}><FolderMinus />移除…</DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
                   </div>
                 </CardContent>
@@ -255,6 +329,7 @@ export default function Folders() {
       <AddFolderDialog open={adding} onOpenChange={setAdding} />
       <AcceptDialog inv={accepting} onClose={() => setAccepting(null)} />
       <MembersDialog folder={editing} onClose={() => setEditing(null)} />
+      <RemoveDialog folder={removing} onClose={() => setRemoving(null)} />
     </>
   );
 }

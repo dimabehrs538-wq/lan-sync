@@ -15,6 +15,7 @@ import (
 	"github.com/lan-sync/teamsync/core/internal/conflict"
 	"github.com/lan-sync/teamsync/core/internal/stclient"
 	"github.com/lan-sync/teamsync/core/internal/team"
+	"github.com/lan-sync/teamsync/core/internal/trash"
 )
 
 // UIEvent 是推给前端的简化事件，Message 为中文提示。
@@ -67,6 +68,7 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("POST /api/pending/devices/{id}/accept", s.acceptDevice)
 	m.HandleFunc("DELETE /api/pending/devices/{id}", s.dismissDevice)
 	m.HandleFunc("PUT /api/folders/{id}/members", s.setMembers)
+	m.HandleFunc("DELETE /api/folders/{id}", s.removeFolder)
 	m.HandleFunc("POST /api/folders/{id}/reinvite", s.reinvite)
 	m.HandleFunc("GET /api/invitations", s.invitations)
 	m.HandleFunc("POST /api/invitations/accept", s.acceptInvitation)
@@ -298,6 +300,18 @@ func (s *Server) dismissDevice(w http.ResponseWriter, r *http.Request) {
 	respond(w, nil, s.C.DismissPendingDevice(r.Context(), r.PathValue("id")))
 }
 
+// removeFolder 仅在本机移除文件夹。?deleteFiles=1 同时删除本地文件（优先回收站），
+// &permanent=1 允许回收站失败时永久删除。
+func (s *Server) removeFolder(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	res, err := s.Team.RemoveFolder(r.Context(), s.Store, r.PathValue("id"), q.Get("deleteFiles") == "1", q.Get("permanent") == "1", trash.Remove)
+	if err != nil {
+		writeErr(w, 500, err)
+		return
+	}
+	writeJSON(w, res)
+}
+
 func (s *Server) setMembers(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Members []string `json:"members"`
@@ -497,6 +511,17 @@ func (s *Server) RunEventBridge(ctx context.Context) {
 	s.C.WatchEvents(ctx, func(e stclient.Event) {
 		if ue, ok := Translate(e, names.Lookup(ctx)); ok {
 			if e.Type == "PendingFoldersChanged" {
+				// 对方撤回邀请（移出成员/重新邀请的第一步）-> 清除忽略记录，下次邀请重新出现
+				if m, _ := ue.Data.(map[string]any); m != nil {
+					rem, _ := m["removed"].([]any)
+					for _, x := range rem {
+						if o, _ := x.(map[string]any); o != nil {
+							fid, _ := o["folderID"].(string)
+							dev, _ := o["deviceID"].(string)
+							s.Store.UnignorePair(fid, dev)
+						}
+					}
+				}
 				inv, err := s.Team.Invitations(ctx, s.Store)
 				if err != nil {
 					return

@@ -4,6 +4,8 @@
 #  2. A 新建文件夹只共享给 B：B 收到邀请且不会自动创建；C 收不到
 #  3. B 忽略邀请 -> 邀请消失；A 重新邀请 -> B 再次收到
 #  4. B 接受到自定义路径 -> 双向同步
+#  5. 移除：B 仅停止同步（文件保留、不再同步、不会再作为邀请出现，重新邀请后出现）；
+#     C 同时删除本地文件（进回收站，A 不受影响）
 # 用法: scripts/e2e-two-nodes.sh   需要先 scripts/fetch-syncthing.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -13,11 +15,9 @@ W="$(mktemp -d)"; T="$W/teamsyncd"
 PIDS=()
 cleanup(){ kill "${PIDS[@]}" 2>/dev/null || true; wait 2>/dev/null || true; rm -rf "$W"; }
 trap cleanup EXIT
-port=22101
-for n in A B C; do
-  "$T" serve --home "$W/$n" --folders-dir "$W/$n-base" --listen "tcp://0.0.0.0:$port" --syncthing "$ST" >"$W/$n.log" 2>&1 & PIDS+=($!)
-  port=$((port+1))
-done
+declare -A PORT=([A]=22101 [B]=22102 [C]=22103) PID
+start(){ XDG_DATA_HOME="$W/$1-xdg" "$T" serve --home "$W/$1" --folders-dir "$W/$1-base" --listen "tcp://0.0.0.0:${PORT[$1]}" --syncthing "$ST" >>"$W/$1.log" 2>&1 & PID[$1]=$!; PIDS+=($!); }
+for n in A B C; do start $n; done
 for n in A B C; do until [ -f "$W/$n/daemon.json" ]; do sleep 0.5; done; done
 id(){ "$T" status --home "$W/$1" | sed -n 's/.*"myID": "\(.*\)".*/\1/p'; }
 IA=$(id A); IB=$(id B); IC=$(id C)
@@ -43,6 +43,11 @@ t B ignore-invite "$FID" "$IA" >/dev/null
 wait_for "! t B invites | grep -q $FID" "B 忽略后邀请消失" 10
 sleep 5
 t B invites | grep -q "$FID" && { echo "✘ 忽略后又出现"; exit 1; } || echo "✔ 忽略后不再提示"
+kill "${PID[B]}"; wait "${PID[B]}" 2>/dev/null || true; rm -f "$W/B/daemon.json"; start B
+until [ -f "$W/B/daemon.json" ]; do sleep 0.5; done
+wait_for "t A devices | grep -c '\"connected\": true' | grep -q 2" "B 重启后重新连上 A" 60
+sleep 8
+t B invites | grep -q "$FID" && { echo "✘ 重连后忽略的邀请又出现"; exit 1; } || echo "✔ 重连后忽略的邀请仍然隐藏"
 t A reinvite "$FID" "$IB" >/dev/null
 wait_for "t B invites | grep -q $FID" "A 重新邀请后 B 再次收到邀请" 60
 
@@ -54,4 +59,27 @@ wait_for "t A folders | grep -q '\"remoteState\": \"valid\"'" "A 看到 B 已接
 
 t A share "$FID" "$IB" "$IC" >/dev/null
 wait_for "t C invites | grep -q $FID" "A 编辑成员加入 C 后，C 收到邀请" 60
+t C accept-invite "$FID" "$IA" "$W/C-设计" >/dev/null
+wait_for "[ -f '$W/C-设计/接口.md' ]" "C 接受并同步" 90
+
+# ---- 移除（仅停止同步）----
+t B remove-folder "$FID" >/dev/null
+! t B folders | grep -q "$FID" && echo "✔ B 已移除文件夹"
+[ -f "$W/B-自定义/设计/接口.md" ] && echo "✔ B 本地文件保留"
+echo "移除后新增" > "$W/A-docs/新文件.md"
+wait_for "[ -f '$W/C-设计/新文件.md' ]" "C 继续同步新文件" 60
+sleep 5
+[ ! -e "$W/B-自定义/设计/新文件.md" ] && echo "✔ B 不再同步" || { echo "✘ B 仍在同步"; exit 1; }
+t B folders | grep -q "$FID" && { echo "✘ 文件夹被自动重建"; exit 1; } || echo "✔ 未被自动重建"
+t B invites | grep -q "$FID" && { echo "✘ 移除后又作为邀请出现"; exit 1; } || echo "✔ 移除后没有再弹出邀请"
+wait_for "t A folders | grep -q '\"remoteState\": \"notSharing\"'" "A 看到 B 未加入（notSharing）" 30
+t A reinvite "$FID" "$IB" >/dev/null
+wait_for "t B invites | grep -q $FID" "A 重新邀请后 B 收到邀请" 60
+
+# ---- 移除并删除本地文件 ----
+t C remove-folder "$FID" --delete-files | grep -q '"trashed": true' && echo "✔ C 删除文件（进回收站）"
+[ ! -e "$W/C-设计" ] && echo "✔ C 本地目录已删除"
+ls "$W/C-xdg/Trash/files/" | grep -q "C-设计" && echo "✔ 回收站中可找回"
+sleep 8
+[ -f "$W/A-docs/接口.md" ] && [ -f "$W/A-docs/新文件.md" ] && echo "✔ A 的文件不受影响"
 echo "全部通过"
