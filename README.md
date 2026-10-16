@@ -50,6 +50,16 @@ docs/design.md        设计文档（含 SyncTrayzor 原理分析）
 - Windows：Visual Studio 2022 生成工具（"使用 C++ 的桌面开发"）+ WebView2（Win10/11 一般自带）
 - Linux：`libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev build-essential`
 
+## 下载 Windows 安装包（GitHub Actions）
+
+每次推送到 `main`，GitHub Actions 会自动在 Windows 上构建安装包（工作流：`.github/workflows/build-windows.yml`，也可在 Actions 页面手动 "Run workflow"）：
+
+1. 打开仓库的 **Actions → 构建 Windows 安装包**，点开最新一次成功的运行；
+2. 在页面底部 **Artifacts** 下载 `TeamSync-windows-x64`（zip，内含 NSIS 安装程序 `TeamSync_x.y.z_x64-setup.exe` 和 `TeamSync_x.y.z_x64_zh-CN.msi` 等）；
+3. 推送 `v*` 标签（如 `git tag v0.1.0 && git push origin v0.1.0`）时会自动创建 GitHub Release 并附带安装包。
+
+> 安装包暂未代码签名，首次运行 Windows SmartScreen 可能提示"未知发布者"，点"更多信息 → 仍要运行"即可。
+
 ## Windows 构建（主平台）
 
 在 PowerShell 中（仓库根目录）：
