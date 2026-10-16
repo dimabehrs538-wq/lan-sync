@@ -45,6 +45,7 @@ app/                  Tauri v2 桌面端
   src-tauri/binaries/ sidecar 二进制（脚本生成，不入库）
 scripts/              下载 syncthing、编译内核、两节点端到端测试
 docs/design.md        设计文档（含 SyncTrayzor 原理分析）
+app/icon-src/         图标源文件（icon.svg 应用图标、tray.svg 托盘图标）；改图标后执行 `npx tauri icon icon-src/icon-1024.png -o src-tauri/icons`
 ```
 
 ## 环境要求
