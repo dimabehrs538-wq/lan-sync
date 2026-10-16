@@ -14,14 +14,17 @@
 | ![成员](docs/screenshot-members.png) | ![冲突](docs/screenshot-conflicts.png) |
 | **设置** | **深色主题** |
 | ![设置](docs/screenshot-settings.png) | ![深色](docs/screenshot-overview-dark.png) |
+| **新建文件夹（选择成员）** | **接受邀请（选择保存位置）** |
+| ![新建](docs/screenshot-new-folder-dialog.png) | ![接受](docs/screenshot-accept-invite-dialog.png) |
 
 ## 功能（MVP）
 
 | 功能 | 说明 |
 |---|---|
 | 引擎管理 | 隐藏启动 syncthing（`--no-browser --no-restart`），REST 仅监听 `127.0.0.1` 随机端口，每次启动随机 API Key（`STGUIAPIKEY`），`STNOUPGRADE=1` 禁止自升级；崩溃自动重启（指数退避）；退出时先 REST shutdown，超时再强杀；Windows 用 Job Object、Linux 用 Pdeathsig 保证不留孤儿进程 |
-| 团队文件夹 | 一键新建并共享给所有成员；默认开启实时文件监视（fsWatcher）和简单版本控制（保留 10 份/30 天）；写入默认忽略规则（Office 临时文件 `~$*`、`*.tmp` 等） |
-| 局域网配对 | 显示本机设备 ID；"附近设备"列出局域网发现到的设备和请求加入的设备，点"添加/同意"即可；成员间开启自动接收文件夹，对方共享的团队文件夹自动出现在 `~/TeamSync/<名称>` |
+| 团队文件夹 | 新建时勾选要邀请的成员（默认全选），之后可随时"管理成员"增删；默认开启实时文件监视（fsWatcher）和简单版本控制（保留 10 份/30 天）；写入默认忽略规则（Office 临时文件 `~$*`、`*.tmp` 等） |
+| 邀请制共享 | **不会自动接收**任何文件夹：别人共享的文件夹以"邀请"出现在“团队文件夹”页（侧栏徽标 + 系统通知），显示邀请人和文件夹名；"接受"时选择本机保存位置（默认 = 设置里的默认位置/文件夹名），"忽略"后不再提醒；文件夹卡片上显示每位成员"已加入/待接受"，对方忽略过也可点"重新邀请"再次发出 |
+| 局域网配对 | 显示本机设备 ID；"附近设备"列出局域网发现到的设备和请求加入的设备，点"添加/同意"即可 |
 | 状态与通知 | 概览（同步状态/在线成员/文件夹数）、文件夹列表（状态、文件数、暂停/扫描）、成员在线状态；"张三 修改了 设计/接口.md"类动态与系统通知；托盘提示同步状态 |
 | 冲突中心 | 扫描 `*.sync-conflict-*` 副本，选择保留原文件或冲突版本 |
 | 托盘/自启 | 关闭窗口最小化到托盘；单实例；开机自启（`--minimized` 只驻留托盘） |
@@ -102,25 +105,32 @@ cd core && go build -o teamsyncd ./cmd/teamsyncd
 ./teamsyncd serve --syncthing /path/to/syncthing      # 数据目录默认 <用户配置目录>/TeamSync
 # 另开终端：
 ./teamsyncd status                      # 本机设备 ID 和状态
-./teamsyncd add-folder 设计文档 ~/设计文档
+./teamsyncd add-folder 设计文档 ~/设计文档 [设备ID...]   # 不写设备 = 邀请全部成员
+./teamsyncd share <文件夹ID> <设备ID...>                 # 修改共享成员
+./teamsyncd reinvite <文件夹ID> <设备ID>                 # 重新邀请
+./teamsyncd invites                                       # 收到的邀请
+./teamsyncd accept-invite <文件夹ID> <邀请人ID> [本地路径]
+./teamsyncd ignore-invite <文件夹ID> <邀请人ID>
+./teamsyncd settings [默认存放目录]
 ./teamsyncd nearby                      # 局域网发现的设备 / 待确认设备
 ./teamsyncd add-device <设备ID> 张三
 ./teamsyncd accept <设备ID>
 ./teamsyncd folders | devices | conflicts | scan <文件夹ID>
 ```
 
-`serve` 参数：`--home` 数据目录、`--folders-dir` 自动接收的文件夹存放处（默认 `~/TeamSync`）、`--listen` 同步监听地址（默认 22000）、`--api-port`/`--token` 本地 API、`--exit-on-stdin-close`（sidecar 模式）。
+`serve` 参数：`--home` 数据目录、`--folders-dir` 接收邀请时的默认存放目录初始值（默认 `~/TeamSync`，之后以界面"设置"为准，保存在 `<home>/settings.json`）、`--listen` 同步监听地址（默认 22000）、`--api-port`/`--token` 本地 API、`--exit-on-stdin-close`（sidecar 模式）。
 
 ## 测试
 
 ```bash
 cd core && go test ./...          # 单元测试
-scripts/e2e-two-nodes.sh          # 本机起两个实例：局域网发现 → 配对 → 双向同步文件
+scripts/e2e-two-nodes.sh          # 本机起三个实例：配对 → 只邀请 B（C 收不到、B 不自动创建）→ 忽略 → 重新邀请再次出现 → 接受到自定义路径并双向同步 → 编辑成员邀请 C
 ```
 
 ## 使用建议
 
 - 两人同时改同一文档只会产生冲突副本，不会自动合并：建议"一人一文档/一人一子目录"，AI 生成文档按"作者_主题"命名。
+- 重新邀请的原理：把成员从文件夹移除、约 5 秒后再加回，对方会收到一条新时间的邀请（忽略记录按"文件夹 + 邀请人 + 邀请时间"保存，所以新邀请会重新出现）。
 - 只有在线的电脑之间才同步；建议每个人都互加所有成员，或放一台常开电脑当"中心节点"。
 - 误删/误覆盖可在团队文件夹的 `.stversions` 中找回旧版本。
 

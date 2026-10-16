@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
-import { Bell, Info, Laptop, Moon, Power, ShieldCheck, Sun } from "lucide-react";
+import { Bell, FolderOpen, Info, Laptop, Moon, Power, Save, ShieldCheck, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { PageHeader } from "@/components/common";
-import { formatUptime, isTauri } from "@/lib/api";
+import { api, formatUptime, isTauri } from "@/lib/api";
 import { useData } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
@@ -22,7 +24,9 @@ function Row({ icon: Icon, title, desc, children }: { icon: typeof Bell; title: 
 
 export default function Settings() {
   const { theme, setTheme } = useTheme();
-  const { status } = useData();
+  const { status, settings, run } = useData();
+  const [base, setBase] = useState("");
+  useEffect(() => { if (settings) setBase(settings.defaultBaseDir); }, [settings?.defaultBaseDir]);
   const [auto, setAuto] = useState(false);
   const [notify, setNotify] = useState(localStorage.getItem("notify") !== "0");
   useEffect(() => {
@@ -44,6 +48,21 @@ export default function Settings() {
         </CardContent>
       </Card>
       <Card className="mt-4">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-sm"><FolderOpen className="size-4" />接收文件夹的默认位置</CardTitle>
+          <CardDescription>接受同事的文件夹邀请时，默认保存到这里的“文件夹名”子目录（每次接受时仍可修改）。</CardDescription>
+        </CardHeader>
+        <CardContent className="flex gap-2">
+          <Input value={base} onChange={(e) => setBase(e.target.value)} placeholder="例如：D:\TeamSync" className="font-mono text-xs" />
+          {isTauri() && <Button variant="outline" onClick={async () => {
+            const { open } = await import("@tauri-apps/plugin-dialog");
+            const p = await open({ directory: true, title: "选择默认位置", defaultPath: base || undefined });
+            if (typeof p === "string") setBase(p);
+          }}><FolderOpen />浏览</Button>}
+          <Button disabled={!base || base === settings?.defaultBaseDir} onClick={() => run(() => api("PUT", "/api/settings", { defaultBaseDir: base }), "已保存默认位置")}><Save />保存</Button>
+        </CardContent>
+      </Card>
+      <Card className="mt-4">
         <CardHeader><CardTitle className="text-sm">通用</CardTitle></CardHeader>
         <CardContent>
           <Row icon={Power} title="开机自动启动" desc="登录系统后自动在后台运行，只显示托盘图标">
@@ -54,7 +73,7 @@ export default function Settings() {
             }} />
           </Row>
           <Separator />
-          <Row icon={Bell} title="文件变更通知" desc="成员新增或修改文件、请求加入时弹出系统通知">
+          <Row icon={Bell} title="文件变更通知" desc="收到文件夹邀请、成员请求加入、成员修改文件时弹出系统通知">
             <Switch checked={notify} onCheckedChange={(v) => { setNotify(v); localStorage.setItem("notify", v ? "1" : "0"); }} />
           </Row>
         </CardContent>

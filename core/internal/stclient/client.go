@@ -280,3 +280,15 @@ func (c *Client) WatchEvents(ctx context.Context, fn func(Event)) {
 		}
 	}
 }
+
+type Completion struct {
+	Completion  float64 `json:"completion"`
+	NeedItems   int     `json:"needItems"`
+	RemoteState string  `json:"remoteState"` // unknown | notSharing | paused | valid
+}
+
+// Completion 查询某设备在某文件夹上的同步完成度与共享状态。
+func (c *Client) Completion(ctx context.Context, folder, device string) (r Completion, err error) {
+	err = c.Do(ctx, "GET", "/rest/db/completion", url.Values{"folder": {folder}, "device": {device}}, nil, &r)
+	return
+}

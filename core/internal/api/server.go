@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -30,13 +31,14 @@ type Server struct {
 	Team        *team.Service
 	Token       string
 	EngineState func() string
+	Store       *team.Store
 
 	mu   sync.Mutex
 	subs map[chan UIEvent]struct{}
 }
 
-func New(c *stclient.Client, token string, state func() string) *Server {
-	return &Server{C: c, Team: &team.Service{C: c}, Token: token, EngineState: state, subs: map[chan UIEvent]struct{}{}}
+func New(c *stclient.Client, token string, state func() string, store *team.Store) *Server {
+	return &Server{C: c, Team: &team.Service{C: c}, Token: token, EngineState: state, Store: store, subs: map[chan UIEvent]struct{}{}}
 }
 
 func (s *Server) Publish(e UIEvent) {
@@ -64,8 +66,13 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("GET /api/nearby", s.nearby)
 	m.HandleFunc("POST /api/pending/devices/{id}/accept", s.acceptDevice)
 	m.HandleFunc("DELETE /api/pending/devices/{id}", s.dismissDevice)
-	m.HandleFunc("GET /api/pending/folders", s.pendingFolders)
-	m.HandleFunc("POST /api/pending/folders/accept", s.acceptFolder)
+	m.HandleFunc("PUT /api/folders/{id}/members", s.setMembers)
+	m.HandleFunc("POST /api/folders/{id}/reinvite", s.reinvite)
+	m.HandleFunc("GET /api/invitations", s.invitations)
+	m.HandleFunc("POST /api/invitations/accept", s.acceptInvitation)
+	m.HandleFunc("POST /api/invitations/ignore", s.ignoreInvitation)
+	m.HandleFunc("GET /api/settings", s.getSettings)
+	m.HandleFunc("PUT /api/settings", s.putSettings)
 	m.HandleFunc("GET /api/conflicts", s.conflicts)
 	m.HandleFunc("POST /api/conflicts/resolve", s.resolveConflict)
 	m.HandleFunc("GET /api/events", s.events)
@@ -155,10 +162,19 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out)
 }
 
+type folderMember struct {
+	DeviceID    string  `json:"deviceID"`
+	Name        string  `json:"name"`
+	Connected   bool    `json:"connected"`
+	RemoteState string  `json:"remoteState"` // valid=已接受 notSharing=未接受/已忽略 paused unknown
+	Completion  float64 `json:"completion"`
+}
+
 type folderView struct {
 	stclient.Folder
 	Status    *stclient.FolderStatus `json:"status,omitempty"`
 	Conflicts int                    `json:"conflicts"`
+	Members   []folderMember         `json:"members"`
 }
 
 func (s *Server) folders(w http.ResponseWriter, r *http.Request) {
@@ -167,9 +183,27 @@ func (s *Server) folders(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err)
 		return
 	}
+	ctx := r.Context()
+	my, _ := s.Team.MyID(ctx)
+	devs, _ := s.C.Devices(ctx)
+	names := map[string]string{}
+	for _, d := range devs {
+		names[d.DeviceID] = d.Name
+	}
+	conns, _ := s.C.Connections(ctx)
 	out := make([]folderView, 0, len(fs))
 	for _, f := range fs {
-		v := folderView{Folder: f}
+		v := folderView{Folder: f, Members: []folderMember{}}
+		for _, d := range f.Devices {
+			if d.DeviceID == my {
+				continue
+			}
+			m := folderMember{DeviceID: d.DeviceID, Name: names[d.DeviceID], Connected: conns.Connections[d.DeviceID].Connected, RemoteState: "unknown"}
+			if c, err := s.C.Completion(ctx, f.ID, d.DeviceID); err == nil {
+				m.RemoteState, m.Completion = c.RemoteState, c.Completion
+			}
+			v.Members = append(v.Members, m)
+		}
 		if st, err := s.C.FolderStatus(r.Context(), f.ID); err == nil {
 			v.Status = &st
 		}
@@ -184,12 +218,20 @@ func (s *Server) folders(w http.ResponseWriter, r *http.Request) {
 func decode(r *http.Request, v any) error { return json.NewDecoder(r.Body).Decode(v) }
 
 func (s *Server) createFolder(w http.ResponseWriter, r *http.Request) {
-	var in struct{ Label, Path string }
+	var in struct {
+		Label   string    `json:"label"`
+		Path    string    `json:"path"`
+		Members *[]string `json:"members"` // 省略=全部成员
+	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, 400, err)
 		return
 	}
-	f, err := s.Team.CreateFolder(r.Context(), in.Label, in.Path)
+	var members []string
+	if in.Members != nil {
+		members = append([]string{}, (*in.Members)...)
+	}
+	f, err := s.Team.CreateFolder(r.Context(), in.Label, in.Path, members)
 	respond(w, f, err)
 }
 
@@ -256,30 +298,123 @@ func (s *Server) dismissDevice(w http.ResponseWriter, r *http.Request) {
 	respond(w, nil, s.C.DismissPendingDevice(r.Context(), r.PathValue("id")))
 }
 
-func (s *Server) pendingFolders(w http.ResponseWriter, r *http.Request) {
-	p, err := s.C.PendingFolders(r.Context())
-	respond(w, p, err)
-}
-
-func (s *Server) acceptFolder(w http.ResponseWriter, r *http.Request) {
+func (s *Server) setMembers(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		FolderID string   `json:"folderID"`
-		Label    string   `json:"label"`
-		Path     string   `json:"path"`
-		Devices  []string `json:"devices"`
+		Members []string `json:"members"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, 400, err)
 		return
 	}
-	my, err := s.Team.MyID(r.Context())
+	respond(w, nil, s.Team.SetFolderMembers(r.Context(), r.PathValue("id"), in.Members))
+}
+
+// ReinviteGap 重新邀请时移除与加回之间的间隔（需大于集群配置传播时间）。
+var ReinviteGap = 5 * time.Second
+
+func (s *Server) reinvite(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		DeviceID string `json:"deviceID"`
+	}
+	if err := decode(r, &in); err != nil || in.DeviceID == "" {
+		writeErr(w, 400, fmt.Errorf("缺少 deviceID"))
+		return
+	}
+	fid := r.PathValue("id")
+	if _, err := s.C.Folder(r.Context(), fid); err != nil {
+		writeErr(w, 404, err)
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		_ = s.Team.Reinvite(ctx, fid, in.DeviceID, ReinviteGap)
+	}()
+	respond(w, nil, nil)
+}
+
+func (s *Server) invitations(w http.ResponseWriter, r *http.Request) {
+	inv, err := s.Team.Invitations(r.Context(), s.Store)
+	respond(w, inv, err)
+}
+
+func (s *Server) acceptInvitation(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		FolderID string `json:"folderID"`
+		DeviceID string `json:"deviceID"`
+		Label    string `json:"label"`
+		Path     string `json:"path"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	if in.FolderID == "" || in.Path == "" {
+		writeErr(w, 400, fmt.Errorf("文件夹和保存路径不能为空"))
+		return
+	}
+	ctx := r.Context()
+	my, err := s.Team.MyID(ctx)
 	if err != nil {
 		writeErr(w, 500, err)
 		return
 	}
-	f := team.NewTeamFolder(in.Label, in.Path, append([]string{my}, in.Devices...))
+	// 同一文件夹可能由多位成员共享，一起加入
+	devs := []string{my, in.DeviceID}
+	if pend, err := s.C.PendingFolders(ctx); err == nil {
+		for d := range pend[in.FolderID].OfferedBy {
+			devs = append(devs, d)
+		}
+	}
+	if err := os.MkdirAll(in.Path, 0o755); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	f := team.NewTeamFolder(in.Label, in.Path, devs)
 	f.ID = in.FolderID
-	respond(w, f, s.C.PutFolder(r.Context(), f))
+	if err := s.C.PutFolder(ctx, f); err != nil {
+		writeErr(w, 500, err)
+		return
+	}
+	_ = s.Store.Unignore(in.FolderID)
+	respond(w, f, nil)
+}
+
+func (s *Server) ignoreInvitation(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		FolderID  string `json:"folderID"`
+		DeviceID  string `json:"deviceID"`
+		OfferTime string `json:"offerTime"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	respond(w, nil, s.Store.Ignore(in.FolderID, in.DeviceID, in.OfferTime))
+}
+
+func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
+	st := s.Store.Get()
+	writeJSON(w, map[string]any{"defaultBaseDir": st.DefaultBaseDir, "ignoredCount": len(st.Ignored)})
+}
+
+func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		DefaultBaseDir string `json:"defaultBaseDir"`
+	}
+	if err := decode(r, &in); err != nil || in.DefaultBaseDir == "" {
+		writeErr(w, 400, fmt.Errorf("默认目录不能为空"))
+		return
+	}
+	if err := os.MkdirAll(in.DefaultBaseDir, 0o755); err != nil {
+		writeErr(w, 400, fmt.Errorf("无法创建目录：%v", err))
+		return
+	}
+	if err := s.Store.Update(func(st *team.Settings) { st.DefaultBaseDir = in.DefaultBaseDir }); err != nil {
+		writeErr(w, 500, err)
+		return
+	}
+	respond(w, nil, s.Team.ApplyFolderDefaults(r.Context(), in.DefaultBaseDir))
 }
 
 type conflictView struct {
@@ -358,8 +493,30 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 func (s *Server) RunEventBridge(ctx context.Context) {
 	names := newNameCache(s.C)
 	seenPending := map[string]bool{}
+	seenInvite := map[string]bool{}
 	s.C.WatchEvents(ctx, func(e stclient.Event) {
 		if ue, ok := Translate(e, names.Lookup(ctx)); ok {
+			if e.Type == "PendingFoldersChanged" {
+				inv, err := s.Team.Invitations(ctx, s.Store)
+				if err != nil {
+					return
+				}
+				for _, i := range inv {
+					k := i.FolderID + "|" + i.DeviceID + "|" + i.OfferTime
+					if seenInvite[k] {
+						continue
+					}
+					seenInvite[k] = true
+					who := i.DeviceName
+					if who == "" {
+						who = i.DeviceID[:7]
+					}
+					s.Publish(UIEvent{Type: "FolderInvitation", Time: e.Time, Notify: true,
+						Message: who + " 邀请你加入文件夹「" + i.Label + "」", Data: i})
+				}
+				s.Publish(UIEvent{Type: "InvitationsChanged", Time: e.Time})
+				return
+			}
 			// Syncthing 会周期性重复报告待确认设备，同一设备只提示一次
 			if e.Type == "PendingDevicesChanged" {
 				if m, _ := ue.Data.(map[string]any); m != nil {

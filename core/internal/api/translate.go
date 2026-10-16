@@ -34,11 +34,7 @@ func Translate(e stclient.Event, name func(string) string) (UIEvent, bool) {
 		}
 		u.Message, u.Notify, u.Data = "设备 "+n+" 请求加入团队，请在“成员”页确认", true, first
 	case "PendingFoldersChanged":
-		added, _ := d["added"].([]any)
-		if len(added) == 0 {
-			return u, false
-		}
-		u.Message, u.Notify, u.Data = "有成员向你共享了新的文件夹，请在“文件夹”页接受", true, added
+		u.Data = d // 由事件桥转换成邀请通知
 	case "RemoteChangeDetected":
 		act := actionCN[str("action")]
 		if act == "" {

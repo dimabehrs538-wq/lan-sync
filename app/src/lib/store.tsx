@@ -1,11 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
-import { api, eventSourceURL, notify, setTray, type Conflict, type Device, type Folder, type Nearby, type PendingFolder, type Status, type UIEvent } from "./api";
+import { api, eventSourceURL, notify, setTray, type Conflict, type Device, type Folder, type Invitation, type Nearby, type Settings, type Status, type UIEvent } from "./api";
 
 interface Activity { id: number; message: string; time: string; type: string }
 interface Data {
   ready: boolean; status: Status | null; folders: Folder[]; devices: Device[]; nearby: Nearby[];
-  pendingFolders: Record<string, PendingFolder>; conflicts: Conflict[]; activity: Activity[];
+  invitations: Invitation[]; settings: Settings | null; conflicts: Conflict[]; activity: Activity[];
   refresh: () => Promise<void>;
   run: (fn: () => Promise<unknown>, ok?: string) => Promise<boolean>;
 }
@@ -19,18 +19,20 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [folders, setFolders] = useState<Folder[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
   const [nearby, setNearby] = useState<Nearby[]>([]);
-  const [pendingFolders, setPendingFolders] = useState<Record<string, PendingFolder>>({});
+  const [invitations, setInvitations] = useState<Invitation[]>([]);
+  const [settings, setSettings] = useState<Settings | null>(null);
   const [conflicts, setConflicts] = useState<Conflict[]>([]);
   const [activity, setActivity] = useState<Activity[]>([]);
   const seq = useRef(0);
 
   const refresh = useCallback(async () => {
     try {
-      const [s, f, d, n, p, c] = await Promise.all([
+      const [s, f, d, n, p, c, st] = await Promise.all([
         api<Status>("GET", "/api/status"), api<Folder[]>("GET", "/api/folders"), api<Device[]>("GET", "/api/devices"),
-        api<Nearby[]>("GET", "/api/nearby"), api<Record<string, PendingFolder>>("GET", "/api/pending/folders"), api<Conflict[]>("GET", "/api/conflicts"),
+        api<Nearby[]>("GET", "/api/nearby"), api<Invitation[]>("GET", "/api/invitations"), api<Conflict[]>("GET", "/api/conflicts"),
+        api<Settings>("GET", "/api/settings"),
       ]);
-      setStatus(s); setFolders(f); setDevices(d); setNearby(n); setPendingFolders(p || {}); setConflicts(c); setReady(true);
+      setStatus(s); setFolders(f); setDevices(d); setNearby(n); setInvitations(p || []); setConflicts(c); setSettings(st); setReady(true);
       setTray(s.error ? "引擎未就绪" : s.syncing ? "同步中" : `已同步 · ${s.connected} 人在线`);
     } catch (e) {
       setStatus((old) => ({ ...(old ?? {}), engine: "unreachable", error: String(e) }));
@@ -70,5 +72,5 @@ export function DataProvider({ children }: { children: ReactNode }) {
     return () => { closed = true; es?.close(); clearInterval(iv); };
   }, [refresh]);
 
-  return <Ctx.Provider value={{ ready, status, folders, devices, nearby, pendingFolders, conflicts, activity, refresh, run }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ ready, status, folders, devices, nearby, invitations, settings, conflicts, activity, refresh, run }}>{children}</Ctx.Provider>;
 }

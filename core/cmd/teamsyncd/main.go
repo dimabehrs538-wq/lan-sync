@@ -31,7 +31,13 @@ const usage = `teamsyncd - 内网团队文件夹同步内核
   teamsyncd serve [--home DIR] [--syncthing PATH] [--api-port N] [--token T] [--folders-dir DIR] [--listen ADDR] [--exit-on-stdin-close]
   teamsyncd status                     查看状态和本机设备 ID
   teamsyncd folders                    列出团队文件夹
-  teamsyncd add-folder <名称> <路径>   创建团队文件夹（自动共享给所有成员）
+  teamsyncd add-folder <名称> <路径> [设备ID...]  创建团队文件夹并共享给指定成员（不指定=全部成员）
+  teamsyncd share <文件夹ID> [设备ID...]          设置文件夹共享成员
+  teamsyncd reinvite <文件夹ID> <设备ID>          重新邀请成员
+  teamsyncd invites                               查看收到的文件夹邀请
+  teamsyncd accept-invite <文件夹ID> <邀请人设备ID> <本地路径>
+  teamsyncd ignore-invite <文件夹ID> <邀请人设备ID>
+  teamsyncd settings [默认存放目录]               查看/修改接收邀请的默认目录
   teamsyncd devices                    列出成员设备
   teamsyncd add-device <设备ID> [名称] 添加成员
   teamsyncd nearby                     列出局域网发现的设备/待确认设备
@@ -121,7 +127,7 @@ func serve(args []string) {
 	stBin := fs.String("syncthing", defaultSyncthing(), "syncthing 可执行文件")
 	apiPort := fs.Int("api-port", 0, "本地 API 端口（0=自动）")
 	token := fs.String("token", "", "本地 API token（空=随机）")
-	foldersDir := fs.String("folders-dir", defaultFoldersDir(), "自动接收的团队文件夹存放目录")
+	foldersDir := fs.String("folders-dir", defaultFoldersDir(), "接收邀请时的默认存放目录（首次运行时写入设置，之后以设置为准）")
 	listen := fs.String("listen", "", "同步监听地址，如 tcp://0.0.0.0:22001（空=Syncthing 默认 22000）")
 	stdinWatch := fs.Bool("exit-on-stdin-close", false, "标准输入关闭时退出（作为 sidecar 时使用）")
 	fs.Parse(args)
@@ -150,7 +156,11 @@ func serve(args []string) {
 			log.Printf("设置监听地址失败: %v", err)
 		}
 	}
-	if err := ts.ApplyFolderDefaults(ctx, *foldersDir); err != nil {
+	if err := ts.DisableAutoAccept(ctx); err != nil {
+		log.Printf("关闭自动接收失败: %v", err)
+	}
+	store := team.OpenStore(filepath.Join(*home, "settings.json"), *foldersDir)
+	if err := ts.ApplyFolderDefaults(ctx, store.Get().DefaultBaseDir); err != nil {
 		log.Printf("设置文件夹默认值失败: %v", err)
 	}
 
@@ -162,7 +172,7 @@ func serve(args []string) {
 		log.Fatal(err)
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
-	srv := api.New(c, *token, func() string { return string(eng.State()) })
+	srv := api.New(c, *token, func() string { return string(eng.State()) }, store)
 	eng.OnState = func(s engine.State) {
 		srv.Publish(api.UIEvent{Type: "EngineState", Time: time.Now(), Data: map[string]string{"state": string(s)}})
 	}
@@ -240,7 +250,45 @@ func runCLI(cmd string, args []string, home string) error {
 			return err
 		}
 		p, _ := filepath.Abs(args[1])
-		return call("POST", "/api/folders", map[string]string{"label": args[0], "path": p})
+		body := map[string]any{"label": args[0], "path": p}
+		if len(args) > 2 {
+			body["members"] = args[2:]
+		}
+		return call("POST", "/api/folders", body)
+	case "share":
+		if err := need(1); err != nil {
+			return err
+		}
+		return call("PUT", "/api/folders/"+args[0]+"/members", map[string]any{"members": append([]string{}, args[1:]...)})
+	case "reinvite":
+		if err := need(2); err != nil {
+			return err
+		}
+		return call("POST", "/api/folders/"+args[0]+"/reinvite", map[string]string{"deviceID": args[1]})
+	case "invites":
+		return call("GET", "/api/invitations", nil)
+	case "accept-invite", "ignore-invite":
+		if err := need(2); err != nil {
+			return err
+		}
+		inv, err := findInvite(info, args[0], args[1])
+		if err != nil {
+			return err
+		}
+		if cmd == "ignore-invite" {
+			return call("POST", "/api/invitations/ignore", map[string]string{"folderID": inv.FolderID, "deviceID": inv.DeviceID, "offerTime": inv.OfferTime})
+		}
+		p := inv.SuggestPath
+		if len(args) > 2 {
+			p, _ = filepath.Abs(args[2])
+		}
+		return call("POST", "/api/invitations/accept", map[string]string{"folderID": inv.FolderID, "deviceID": inv.DeviceID, "label": inv.Label, "path": p})
+	case "settings":
+		if len(args) > 0 {
+			p, _ := filepath.Abs(args[0])
+			return call("PUT", "/api/settings", map[string]string{"defaultBaseDir": p})
+		}
+		return call("GET", "/api/settings", nil)
 	case "devices":
 		return call("GET", "/api/devices", nil)
 	case "add-device":
@@ -268,4 +316,24 @@ func runCLI(cmd string, args []string, home string) error {
 		return call("POST", "/api/folders/"+args[0]+"/scan", nil)
 	}
 	return fmt.Errorf("未知命令 %q\n\n%s", cmd, usage)
+}
+
+func findInvite(info daemonInfo, folderID, deviceID string) (team.Invitation, error) {
+	req, _ := http.NewRequest("GET", fmt.Sprintf("http://127.0.0.1:%d/api/invitations", info.Port), nil)
+	req.Header.Set("Authorization", "Bearer "+info.Token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return team.Invitation{}, err
+	}
+	defer resp.Body.Close()
+	var list []team.Invitation
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		return team.Invitation{}, err
+	}
+	for _, i := range list {
+		if i.FolderID == folderID && (deviceID == "" || i.DeviceID == deviceID) {
+			return i, nil
+		}
+	}
+	return team.Invitation{}, fmt.Errorf("没有找到文件夹 %s 的邀请", folderID)
 }

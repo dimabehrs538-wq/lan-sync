@@ -22,7 +22,7 @@ function AddDeviceDialog({ open, onOpenChange, preset }: { open: boolean; onOpen
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{preset ? "添加附近设备" : "手动添加成员"}</DialogTitle>
-          <DialogDescription>添加后对方会收到加入请求；对方同意后，所有团队文件夹将自动共享给他。</DialogDescription>
+          <DialogDescription>添加后对方会收到加入请求；对方同意后即成为成员，之后可以在“团队文件夹”里邀请他加入指定文件夹。</DialogDescription>
         </DialogHeader>
         <form id="add-dev" className="space-y-4" onSubmit={async (e) => {
           e.preventDefault();
@@ -96,7 +96,7 @@ export default function Members() {
                   <div className="truncate text-xs text-muted-foreground">{addr(n.addresses)} · <span className="font-mono">{short(n.deviceID)}</span></div>
                 </div>
                 <Button variant="outline" size="sm" onClick={() => run(() => api("DELETE", `/api/pending/devices/${n.deviceID}`), "已忽略")}><X />忽略</Button>
-                <Button size="sm" onClick={() => run(() => api("POST", `/api/pending/devices/${n.deviceID}/accept`), "已同意，团队文件夹将自动同步")}><Check />同意</Button>
+                <Button size="sm" onClick={() => run(() => api("POST", `/api/pending/devices/${n.deviceID}/accept`), "已同意，对方已成为成员")}><Check />同意</Button>
               </div>
             ))}
           </CardContent>

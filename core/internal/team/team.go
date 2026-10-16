@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/lan-sync/teamsync/core/internal/stclient"
 )
@@ -101,8 +102,8 @@ func (s *Service) MyID(ctx context.Context) (string, error) {
 	return st.MyID, err
 }
 
-// CreateFolder 创建团队文件夹，并共享给所有已添加的成员。
-func (s *Service) CreateFolder(ctx context.Context, label, path string) (stclient.Folder, error) {
+// CreateFolder 创建团队文件夹并共享给指定成员；members 为 nil 表示共享给全部已添加成员。
+func (s *Service) CreateFolder(ctx context.Context, label, path string, members []string) (stclient.Folder, error) {
 	if label == "" || path == "" {
 		return stclient.Folder{}, errors.New("名称和路径不能为空")
 	}
@@ -114,41 +115,77 @@ func (s *Service) CreateFolder(ctx context.Context, label, path string) (stclien
 	if err != nil {
 		return stclient.Folder{}, err
 	}
-	ids := []string{my}
-	devs, err := s.C.Devices(ctx)
-	if err != nil {
-		return stclient.Folder{}, err
+	if members == nil {
+		devs, err := s.C.Devices(ctx)
+		if err != nil {
+			return stclient.Folder{}, err
+		}
+		for _, d := range devs {
+			members = append(members, d.DeviceID)
+		}
 	}
-	for _, d := range devs {
-		ids = append(ids, d.DeviceID)
-	}
-	f := NewTeamFolder(label, path, ids)
+	f := NewTeamFolder(label, path, append([]string{my}, members...))
 	return f, s.C.PutFolder(ctx, f)
 }
 
-// AddMember 添加成员设备（地址 dynamic，靠局域网发现），并把所有团队文件夹共享给它。
-// 对团队成员开启 autoAcceptFolders，对方共享的文件夹会自动接收。
+// SetFolderMembers 设置文件夹共享的成员（本机始终保留）。
+func (s *Service) SetFolderMembers(ctx context.Context, folderID string, members []string) error {
+	my, err := s.MyID(ctx)
+	if err != nil {
+		return err
+	}
+	var devs []stclient.FolderDevice
+	for _, d := range uniq(append([]string{my}, members...)) {
+		devs = append(devs, stclient.FolderDevice{DeviceID: d})
+	}
+	return s.C.PatchFolder(ctx, folderID, map[string]any{"devices": devs})
+}
+
+// Reinvite 重新邀请：先把成员从文件夹移除，等对方收到新的集群配置后再加回，
+// 对方会收到一条新的（时间更新的）共享邀请，从而越过其"忽略"记录。
+func (s *Service) Reinvite(ctx context.Context, folderID, deviceID string, gap time.Duration) error {
+	f, err := s.C.Folder(ctx, folderID)
+	if err != nil {
+		return err
+	}
+	var rest []stclient.FolderDevice
+	for _, d := range f.Devices {
+		if d.DeviceID != deviceID {
+			rest = append(rest, d)
+		}
+	}
+	if err := s.C.PatchFolder(ctx, folderID, map[string]any{"devices": rest}); err != nil {
+		return err
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(gap):
+	}
+	return s.C.PatchFolder(ctx, folderID, map[string]any{"devices": append(rest, stclient.FolderDevice{DeviceID: deviceID})})
+}
+
+// AddMember 添加成员设备（地址 dynamic，靠局域网发现）。
+// 不会自动共享文件夹，也不自动接收对方的文件夹（邀请制）。
 func (s *Service) AddMember(ctx context.Context, deviceID, name string) error {
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {
 		return errors.New("设备 ID 不能为空")
 	}
-	if err := s.C.PutDevice(ctx, stclient.Device{
-		DeviceID: deviceID, Name: name, Addresses: []string{"dynamic"}, AutoAcceptFolders: true,
-	}); err != nil {
-		return err
-	}
-	folders, err := s.C.Folders(ctx)
+	return s.C.PutDevice(ctx, stclient.Device{DeviceID: deviceID, Name: name, Addresses: []string{"dynamic"}})
+}
+
+// DisableAutoAccept 关闭所有已有成员的自动接收文件夹（从旧版本迁移）。
+func (s *Service) DisableAutoAccept(ctx context.Context) error {
+	devs, err := s.C.Devices(ctx)
 	if err != nil {
 		return err
 	}
-	for _, f := range folders {
-		if hasDevice(f, deviceID) {
-			continue
-		}
-		f.Devices = append(f.Devices, stclient.FolderDevice{DeviceID: deviceID})
-		if err := s.C.PatchFolder(ctx, f.ID, map[string]any{"devices": f.Devices}); err != nil {
-			return err
+	for _, d := range devs {
+		if d.AutoAcceptFolders {
+			if err := s.C.PatchDevice(ctx, d.DeviceID, map[string]any{"autoAcceptFolders": false}); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

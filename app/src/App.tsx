@@ -21,12 +21,12 @@ const ENGINE: Record<string, [string, "green" | "amber" | "red" | "gray"]> = {
 
 export default function App() {
   const [page, setPage] = useState<Page>(() => (new URLSearchParams(location.search).get("page") as Page) || "overview");
-  const { status, conflicts, nearby, folders } = useData();
+  const { status, conflicts, nearby, invitations } = useData();
   const { resolvedTheme, setTheme } = useTheme();
   const pendingDevices = nearby.filter((n) => n.pending).length;
   const nav: { id: Page; label: string; icon: typeof Users; badge?: number; tone?: "red" | "blue" }[] = [
     { id: "overview", label: "概览", icon: LayoutDashboard },
-    { id: "folders", label: "团队文件夹", icon: FolderSync, badge: folders.length || undefined },
+    { id: "folders", label: "团队文件夹", icon: FolderSync, badge: invitations.length || undefined, tone: "blue" },
     { id: "members", label: "成员", icon: Users, badge: pendingDevices || undefined, tone: "blue" },
     { id: "conflicts", label: "冲突", icon: AlertTriangle, badge: conflicts.length || undefined, tone: "red" },
     { id: "settings", label: "设置", icon: SettingsIcon },

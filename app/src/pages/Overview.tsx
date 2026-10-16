@@ -25,7 +25,7 @@ function Stat({ icon: Icon, label, value, sub, tone }: { icon: typeof Users; lab
 }
 
 export default function Overview({ go }: { go: (p: Page) => void }) {
-  const { status, folders, devices, conflicts, activity, nearby } = useData();
+  const { status, folders, devices, conflicts, activity, nearby, invitations } = useData();
   const members = devices.filter((d) => !d.self);
   const online = members.filter((d) => d.connected);
   const pending = nearby.filter((n) => n.pending);
@@ -49,6 +49,16 @@ export default function Overview({ go }: { go: (p: Page) => void }) {
             <Dot tone="blue" pulse />
             <span className="flex-1">有 <b>{pending.length}</b> 台设备请求加入团队</span>
             <Button size="sm" onClick={() => go("members")}>去处理 <ArrowRight /></Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {invitations.length > 0 && (
+        <Card className="mt-4 border-violet-500/40 bg-violet-500/5 py-3">
+          <CardContent className="flex items-center gap-3 px-4 text-sm">
+            <FolderSync className="size-4 text-violet-600" />
+            <span className="flex-1">你有 <b>{invitations.length}</b> 个文件夹邀请：{invitations.slice(0, 2).map((i) => `「${i.label}」`).join("、")}{invitations.length > 2 ? " 等" : ""}</span>
+            <Button size="sm" onClick={() => go("folders")}>查看邀请 <ArrowRight /></Button>
           </CardContent>
         </Card>
       )}
@@ -83,7 +93,7 @@ export default function Overview({ go }: { go: (p: Page) => void }) {
                     <span className="flex items-center gap-1.5 text-xs text-muted-foreground"><Dot tone={st === "idle" ? "green" : st === "error" ? "red" : "amber"} />{STATE_CN[st] ?? st}</span>
                   </div>
                   <Progress value={pct} className={`h-1.5 ${pct === 100 ? "[&_[data-slot=progress-indicator]]:bg-emerald-500" : "[&_[data-slot=progress-indicator]]:bg-sky-500"}`} />
-                  <div className="mt-1 text-[11px] text-muted-foreground">{f.status?.localFiles ?? 0} 个文件 · {f.devices.length - 1} 位成员共享</div>
+                  <div className="mt-1 text-[11px] text-muted-foreground">{f.status?.localFiles ?? 0} 个文件 · {f.members.filter((m) => m.remoteState === "valid").length}/{f.members.length} 位成员已加入</div>
                 </div>
               );
             })}

@@ -10,11 +10,13 @@ export interface Folder {
   id: string; label: string; path: string; type: string; paused: boolean;
   devices: { deviceID: string }[]; fsWatcherEnabled: boolean;
   versioning: { type: string; params: Record<string, string> };
-  status?: FolderStatus; conflicts: number;
+  status?: FolderStatus; conflicts: number; members: FolderMember[];
 }
+export interface FolderMember { deviceID: string; name: string; connected: boolean; remoteState: "valid" | "notSharing" | "paused" | "unknown"; completion: number }
+export interface Invitation { folderID: string; label: string; deviceID: string; deviceName: string; time: string; offerTime: string; suggestPath: string }
+export interface Settings { defaultBaseDir: string; ignoredCount: number }
 export interface Device { deviceID: string; name: string; connected: boolean; address?: string; self: boolean; paused: boolean }
 export interface Nearby { deviceID: string; addresses: string[]; name?: string; pending: boolean }
-export interface PendingFolder { offeredBy: Record<string, { time: string; label: string }> }
 export interface Conflict { path: string; original: string; time: string; device: string; folderID: string; folderLabel: string }
 export interface UIEvent { type: string; message?: string; notify: boolean; time: string; data?: unknown }
 
