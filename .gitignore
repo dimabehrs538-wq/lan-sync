@@ -1,0 +1,10 @@
+# 二进制（由 scripts/fetch-syncthing.* 和 go build 生成）
+app/src-tauri/binaries/*
+!app/src-tauri/binaries/.gitkeep
+core/bin/
+*.exe
+# Node / Rust
+node_modules/
+app/dist/
+app/src-tauri/target/
+app/src-tauri/gen/schemas/
