@@ -11,7 +11,6 @@ import Folders from "@/pages/Folders";
 import Members from "@/pages/Members";
 import Conflicts from "@/pages/Conflicts";
 import Settings from "@/pages/Settings";
-import { UnstableBanner } from "@/components/UnstableBanner";
 
 export type Page = "overview" | "folders" | "members" | "conflicts" | "settings";
 
@@ -73,7 +72,6 @@ export default function App() {
       </aside>
       <main className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-5xl px-8 py-7">
-          <UnstableBanner />
           {page === "overview" && <Overview go={setPage} />}
           {page === "folders" && <Folders />}
           {page === "members" && <Members />}

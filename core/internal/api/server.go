@@ -212,7 +212,6 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out["connected"] = n
-	out["unstable"] = s.Presence.Unstable()
 	folders, _ := s.C.Folders(ctx)
 	syncing := false
 	for _, f := range folders {

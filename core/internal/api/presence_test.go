@@ -79,7 +79,7 @@ func TestOfflineAfterDebounce(t *testing.T) {
 	}
 }
 
-func TestFlapCoalesceAndBanner(t *testing.T) {
+func TestFlapCoalesce(t *testing.T) {
 	p, c, evs := newTestPresence()
 	id := "DEV1234567"
 	for i := 0; i < 4; i++ {
@@ -89,13 +89,10 @@ func TestFlapCoalesceAndBanner(t *testing.T) {
 		c.advance(50 * time.Second)
 	}
 	var unstable []UIEvent
-	banner := 0
 	for _, e := range *evs {
 		switch e.Type {
 		case "DeviceUnstable":
 			unstable = append(unstable, e)
-		case "ConnectionUnstable":
-			banner++
 		}
 		if e.Message != "" && e.Type != "DeviceUnstable" {
 			t.Fatalf("抖动期间不应逐条提示: %s", e.Message)
@@ -103,28 +100,6 @@ func TestFlapCoalesceAndBanner(t *testing.T) {
 	}
 	if len(unstable) != 3 || unstable[2].Message != "成员 张三 连接不稳定（5 分钟内断开 4 次）" || unstable[0].Key != unstable[2].Key {
 		t.Fatalf("合并记录不正确: %+v", unstable)
-	}
-	if banner != 1 {
-		t.Fatalf("达到 3 次应触发一次横幅事件，实际 %d", banner)
-	}
-	if u := p.Unstable(); len(u) != 1 || u[0].Count != 4 || u[0].Name != "张三" {
-		t.Fatalf("Unstable 不正确: %+v", u)
-	}
-	c.advance(11 * time.Minute)
-	if u := p.Unstable(); len(u) != 0 {
-		t.Fatalf("10 分钟后横幅应消失: %+v", u)
-	}
-}
-
-func TestTwoDisconnectsBelowBanner(t *testing.T) {
-	p, c, _ := newTestPresence()
-	p.Disconnected("D", "")
-	c.advance(5 * time.Second)
-	p.Connected("D", "")
-	c.advance(5 * time.Second)
-	p.Disconnected("D", "")
-	if len(p.Unstable()) != 0 {
-		t.Fatal("2 次不应显示横幅")
 	}
 }
 

@@ -4,10 +4,7 @@ export interface CoreInfo { port: number; token: string }
 export interface Status {
   engine: string; myID?: string; uptime?: number; syncthingVersion?: string;
   connected?: number; folders?: number; syncing?: boolean; error?: string;
-  /** 10 分钟内断开 >=3 次的成员 */
-  unstable?: UnstableDevice[];
 }
-export interface UnstableDevice { device: string; name: string; count: number }
 export interface FolderStatus { state: string; globalFiles: number; localFiles: number; needFiles: number; needBytes: number; globalBytes: number; errors: number; error?: string }
 export interface Folder {
   id: string; label: string; path: string; type: string; paused: boolean;
