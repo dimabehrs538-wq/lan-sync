@@ -65,6 +65,9 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("GET /api/devices", s.devices)
 	m.HandleFunc("POST /api/devices", s.addDevice)
 	m.HandleFunc("DELETE /api/devices/{id}", s.delDevice)
+	m.HandleFunc("PATCH /api/devices/{id}", s.renameDevice)
+	m.HandleFunc("GET /api/me", s.getMe)
+	m.HandleFunc("PUT /api/me", s.putMe)
 	m.HandleFunc("GET /api/nearby", s.nearby)
 	m.HandleFunc("POST /api/pending/devices/{id}/accept", s.acceptDevice)
 	m.HandleFunc("DELETE /api/pending/devices/{id}", s.dismissDevice)
@@ -321,6 +324,8 @@ type deviceView struct {
 	Connected bool   `json:"connected"`
 	Address   string `json:"address,omitempty"`
 	Self      bool   `json:"self"`
+	Remark    bool   `json:"remark"`                  // 本机手动设置过备注
+	Announced string `json:"announcedName,omitempty"` // 对方自己设置的名称
 }
 
 func (s *Server) devices(w http.ResponseWriter, r *http.Request) {
@@ -335,7 +340,8 @@ func (s *Server) devices(w http.ResponseWriter, r *http.Request) {
 	out := make([]deviceView, 0, len(devs))
 	for _, d := range devs {
 		c := conns.Connections[d.DeviceID]
-		out = append(out, deviceView{Device: d, Connected: c.Connected, Address: c.Address, Self: d.DeviceID == my})
+		out = append(out, deviceView{Device: d, Connected: c.Connected, Address: c.Address, Self: d.DeviceID == my,
+			Remark: s.Store.HasRemark(d.DeviceID), Announced: s.Store.Announced(d.DeviceID)})
 	}
 	writeJSON(w, out)
 }
@@ -349,11 +355,70 @@ func (s *Server) addDevice(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err)
 		return
 	}
-	respond(w, nil, s.Team.AddMember(r.Context(), in.DeviceID, in.Name))
+	err := s.Team.AddMember(r.Context(), in.DeviceID, in.Name)
+	if err == nil && strings.TrimSpace(in.Name) != "" {
+		_ = s.Store.SetRemark(strings.TrimSpace(in.DeviceID), true)
+	}
+	respond(w, nil, err)
 }
 
 func (s *Server) delDevice(w http.ResponseWriter, r *http.Request) {
 	respond(w, nil, s.C.DeleteDevice(r.Context(), r.PathValue("id")))
+}
+
+func (s *Server) renameDevice(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Name         string `json:"name"`
+		UseAnnounced bool   `json:"useAnnounced"` // 清除备注，改用对方自己设置的名称
+	}
+	if err := decode(r, &in); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	id := r.PathValue("id")
+	if in.UseAnnounced {
+		name, err := s.Team.ClearRemark(r.Context(), s.Store, id)
+		respond(w, map[string]string{"name": name}, err)
+		return
+	}
+	name, err := s.Team.RenameDevice(r.Context(), id, in.Name)
+	if err == nil {
+		err = s.Store.SetRemark(id, true)
+	}
+	switch {
+	case errors.Is(err, team.ErrDeviceNotFound):
+		writeErr(w, 404, err)
+	case err != nil && !isEngineErr(err):
+		writeErr(w, 400, err)
+	default:
+		respond(w, map[string]string{"name": name}, err)
+	}
+}
+
+func (s *Server) getMe(w http.ResponseWriter, r *http.Request) {
+	id, name, err := s.Team.MyName(r.Context())
+	respond(w, map[string]string{"deviceID": id, "name": name}, err)
+}
+
+func (s *Server) putMe(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Name string `json:"name"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	if _, err := team.NormalizeName(in.Name); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	name, err := s.Team.SetMyName(r.Context(), in.Name)
+	respond(w, map[string]string{"name": name}, err)
+}
+
+func isEngineErr(err error) bool {
+	var ae *stclient.APIError
+	return errors.As(err, &ae) || strings.Contains(err.Error(), "dial") || strings.Contains(err.Error(), "EOF")
 }
 
 func (s *Server) nearby(w http.ResponseWriter, r *http.Request) {
@@ -578,6 +643,20 @@ func (s *Server) RunEventBridge(ctx context.Context) {
 	seenPending := map[string]bool{}
 	seenInvite := map[string]bool{}
 	s.C.WatchEvents(ctx, func(e stclient.Event) {
+		if e.Type == "ConfigSaved" {
+			names.Invalidate()
+		}
+		if e.Type == "DeviceConnected" {
+			var d struct {
+				ID         string `json:"id"`
+				DeviceName string `json:"deviceName"`
+			}
+			if json.Unmarshal(e.Data, &d) == nil {
+				if changed, _ := s.Team.ApplyAnnounced(ctx, s.Store, d.ID, d.DeviceName); changed {
+					names.Invalidate()
+				}
+			}
+		}
 		if ue, ok := Translate(e, names.Lookup(ctx)); ok {
 			if e.Type == "PendingFoldersChanged" {
 				// 对方撤回邀请（移出成员/重新邀请的第一步）-> 清除忽略记录，下次邀请重新出现
@@ -636,6 +715,13 @@ type nameCache struct {
 func newNameCache(c *stclient.Client) *nameCache { return &nameCache{c: c} }
 
 // Lookup 返回 设备ID(或7位短ID) -> 名称 的查询函数。
+// Invalidate 让下次 Lookup 重新读取成员名称（改名后立即生效）。
+func (n *nameCache) Invalidate() {
+	n.mu.Lock()
+	n.at = time.Time{}
+	n.mu.Unlock()
+}
+
 func (n *nameCache) Lookup(ctx context.Context) func(string) string {
 	n.mu.Lock()
 	if time.Since(n.at) > 10*time.Second {

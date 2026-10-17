@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Check, QrCode, Radar, Trash2, UserPlus, Users, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Check, MoreHorizontal, Pencil, QrCode, Radar, Trash2, UserPlus, Users, X } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -7,9 +7,63 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Avatar, CopyButton, DeviceIdText, Empty, PageHeader } from "@/components/common";
-import { api, short } from "@/lib/api";
+import { api, short, type Device } from "@/lib/api";
+
+const MAX_NAME = 32;
+
+/** 修改成员备注名（只影响本机显示） */
+function RenameDialog({ device, onClose }: { device: Device | null; onClose: () => void }) {
+  const me = !!device?.self;
+  const { run } = useData();
+  const [name, setName] = useState("");
+  useEffect(() => { if (device) setName(device.name); }, [device]);
+  const v = name.trim();
+  const err = !v ? "备注名不能为空" : [...v].length > MAX_NAME ? `不能超过 ${MAX_NAME} 个字符` : "";
+  const save = async () => {
+    if (!device || err) return;
+    if (v === device.name) return onClose();
+    const ok = me
+      ? await run(() => api("PUT", "/api/me", { name: v }), `我的名称已改为「${v}」，其他成员会看到新名称`)
+      : await run(() => api("PATCH", `/api/devices/${device.deviceID}`, { name: v }), `已将备注改为「${v}」`);
+    if (ok) onClose();
+  };
+  return (
+    <Dialog open={!!device} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{me ? "修改我的名称" : "修改备注"}</DialogTitle>
+          <DialogDescription>{me
+            ? "其他成员会看到这个名称（对方给你设置了备注时以对方的备注为准）。"
+            : "备注名只保存在本机，用于在成员列表、文件夹卡片和冲突记录中显示，不会通知对方；优先于对方自己设置的名称。"}</DialogDescription>
+        </DialogHeader>
+        <form id="rename" className="space-y-2" onSubmit={(e) => { e.preventDefault(); void save(); }}>
+          <Label>{me ? "我的名称" : "备注名"}</Label>
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：张三（设计）" autoFocus onFocus={(e) => e.target.select()} />
+          <div className="flex justify-between text-[11px]">
+            <span className="text-red-600">{name && err}</span>
+            <span className="text-muted-foreground tabular-nums">{[...v].length}/{MAX_NAME}</span>
+          </div>
+          <div className="font-mono text-[11px] text-muted-foreground">设备 ID：{device ? short(device.deviceID) : ""}</div>
+          {!me && device?.announcedName && (
+            <div className="flex items-center justify-between rounded-md border bg-muted/40 px-3 py-2 text-xs">
+              <span>对方自己设置的名称：<b>{device.announcedName}</b></span>
+              {device.remark && <Button type="button" size="xs" variant="outline" onClick={async () => {
+                if (await run(() => api("PATCH", `/api/devices/${device.deviceID}`, { useAnnounced: true }), `已改用对方的名称「${device.announcedName}」`)) onClose();
+              }}>使用该名称</Button>}
+            </div>
+          )}
+        </form>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>取消</Button>
+          <Button type="submit" form="rename" disabled={!!err}><Check />保存</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 import { useData } from "@/lib/store";
 
 function AddDeviceDialog({ open, onOpenChange, preset }: { open: boolean; onOpenChange: (v: boolean) => void; preset?: string }) {
@@ -71,7 +125,9 @@ export default function Members() {
   const [preset, setPreset] = useState<string | undefined>();
   const [pairing, setPairing] = useState(false);
   const [removing, setRemoving] = useState<{ id: string; name: string } | null>(null);
+  const [renaming, setRenaming] = useState<Device | null>(null);
   const members = devices.filter((d) => !d.self);
+  const self = devices.find((d) => d.self);
   const pending = nearby.filter((n) => n.pending);
   const found = nearby.filter((n) => !n.pending);
   const addr = (a: string[]) => a.filter((x) => !x.includes("[")).map((x) => x.replace(/^\w+:\/\//, ""))[0] ?? "";
@@ -128,6 +184,22 @@ export default function Members() {
         </CardContent>
       </Card>
 
+      {self && (
+        <Card className="mb-4 py-4">
+          <CardContent className="flex items-center gap-3 px-5">
+            <Avatar name={self.name} id={self.deviceID} online />
+            <div className="min-w-0 flex-1">
+              <div className="text-xs text-muted-foreground">我的名称（其他成员看到的名字）</div>
+              <button type="button" className="group -mx-1 flex items-center gap-1.5 rounded px-1 font-medium hover:bg-muted" onClick={() => setRenaming(self)} data-testid="my-name">
+                {self.name || short(self.deviceID)}
+                <Pencil className="size-3.5 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+              </button>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => setRenaming(self)}><Pencil />修改</Button>
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader><CardTitle className="text-sm">已添加成员（{members.length}）</CardTitle></CardHeader>
         <CardContent>
@@ -140,7 +212,11 @@ export default function Members() {
                     <TableCell>
                       <div className="flex items-center gap-3">
                         <Avatar name={d.name} id={d.deviceID} online={d.connected} />
-                        <span className="font-medium">{d.name || short(d.deviceID)}</span>
+                        <button type="button" className="group flex items-center gap-1.5 rounded px-1 -mx-1 font-medium hover:bg-muted" title="修改备注" onClick={() => setRenaming(d)}>
+                          {d.name || short(d.deviceID)}
+                          <Pencil className="size-3.5 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+                        </button>
+                        {d.announcedName && d.announcedName !== d.name && <span className="text-[11px] text-muted-foreground">（自称 {d.announcedName}）</span>}
                       </div>
                     </TableCell>
                     <TableCell><span className="font-mono text-xs text-muted-foreground">{d.deviceID.slice(0, 23)}…</span></TableCell>
@@ -150,7 +226,14 @@ export default function Members() {
                         : <Badge variant="outline">离线</Badge>}
                     </TableCell>
                     <TableCell>
-                      <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-red-600" onClick={() => setRemoving({ id: d.deviceID, name: d.name || short(d.deviceID) })}><Trash2 /></Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="更多操作"><MoreHorizontal /></Button></DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-36">
+                          <DropdownMenuItem onClick={() => setRenaming(d)}><Pencil />修改备注</DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem variant="destructive" onClick={() => setRemoving({ id: d.deviceID, name: d.name || short(d.deviceID) })}><Trash2 />移除</DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -160,6 +243,7 @@ export default function Members() {
         </CardContent>
       </Card>
 
+      <RenameDialog device={renaming} onClose={() => setRenaming(null)} />
       <AddDeviceDialog open={adding} onOpenChange={setAdding} preset={preset} />
       <PairDialog open={pairing} onOpenChange={setPairing} />
       <AlertDialog open={!!removing} onOpenChange={(v) => !v && setRemoving(null)}>

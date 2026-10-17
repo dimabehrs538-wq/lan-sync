@@ -17,7 +17,7 @@ export interface FolderProblem { kind: "markerMissing" | "pathMissing" | "other"
 export interface FolderMember { deviceID: string; name: string; connected: boolean; remoteState: "valid" | "notSharing" | "paused" | "unknown"; completion: number }
 export interface Invitation { folderID: string; label: string; deviceID: string; deviceName: string; time: string; offerTime: string; suggestPath: string }
 export interface Settings { defaultBaseDir: string; ignoredCount: number }
-export interface Device { deviceID: string; name: string; connected: boolean; address?: string; self: boolean; paused: boolean }
+export interface Device { deviceID: string; name: string; connected: boolean; address?: string; self: boolean; paused: boolean; remark?: boolean; announcedName?: string }
 export interface Nearby { deviceID: string; addresses: string[]; name?: string; pending: boolean }
 export interface Conflict { path: string; original: string; time: string; device: string; folderID: string; folderLabel: string }
 export interface UIEvent { type: string; message?: string; notify: boolean; time: string; data?: unknown }

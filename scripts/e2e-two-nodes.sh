@@ -62,6 +62,22 @@ wait_for "t C invites | grep -q $FID" "A 编辑成员加入 C 后，C 收到邀�
 t C accept-invite "$FID" "$IA" "$W/C-设计" >/dev/null
 wait_for "[ -f '$W/C-设计/接口.md' ]" "C 接受并同步" 90
 
+# ---- 修改成员备注名（仅本机）----
+t A rename-device "$IB" "  李四（设计） " | grep -q '"李四（设计）"' && echo "✔ 修改备注成功（已去除首尾空格）"
+t A rename-device "$IB" " " >/dev/null 2>&1 && { echo "✘ 空备注应被拒绝"; exit 1; } || echo "✔ 空备注被拒绝"
+t A devices | grep -q '"李四（设计）"' && echo "✔ 成员列表显示新备注"
+t A folders | grep -q '"name": "李四（设计）"' && echo "✔ 文件夹卡片成员显示新备注"
+t B devices | grep -q '李四（设计）' && { echo "✘ 备注不应同步到对方"; exit 1; } || echo "✔ 备注只影响本机"
+
+# ---- 我的名称：A 改名后其他成员看到；对方的备注优先 ----
+t C rename-device "$IA" 老张 >/dev/null
+t A my-name 张经理 | grep -q '"张经理"' && echo "✔ A 修改我的名称"
+t A my-name | grep -q '"name": "张经理"' && echo "✔ A 读取我的名称"
+wait_for "t B devices | python3 -c \"import json,sys; d=[x for x in json.load(sys.stdin) if x['deviceID']=='$IA'][0]; sys.exit(0 if d['name']=='张经理' else 1)\"" "B（无备注）看到 A 的新名称" 60
+wait_for "t C devices | python3 -c \"import json,sys; d=[x for x in json.load(sys.stdin) if x['deviceID']=='$IA'][0]; sys.exit(0 if d['name']=='老张' and d.get('announcedName')=='张经理' else 1)\"" "C 的备注「老张」优先，同时记录 A 自称张经理" 60
+t C rename-device "$IA" --announced | grep -q '"张经理"' && echo "✔ C 清除备注后改用 A 的名称"
+t C devices | grep -q '"name": "张经理"' && echo "✔ C 显示张经理"
+
 # ---- 取消最后的成员：文件夹变为仅本机（回归：members=[]）----
 FID2=$("$T" add-folder 临时 "$W/A-tmp" "$IB" --home "$W/A" | sed -n 's/.*"id": "\(.*\)".*/\1/p' | head -1)
 t A share "$FID2" | grep -q '"ok": true' && echo "✔ 取消最后一位成员成功"

@@ -5,11 +5,13 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/lan-sync/teamsync/core/internal/stclient"
 )
@@ -173,6 +175,42 @@ func (s *Service) AddMember(ctx context.Context, deviceID, name string) error {
 		return errors.New("设备 ID 不能为空")
 	}
 	return s.C.PutDevice(ctx, stclient.Device{DeviceID: deviceID, Name: name, Addresses: []string{"dynamic"}})
+}
+
+// MaxNameLen 是成员备注名的最大长度（按字符计）。
+const MaxNameLen = 32
+
+// ErrDeviceNotFound 表示要改名的设备不是已添加的成员。
+var ErrDeviceNotFound = errors.New("找不到该成员，可能已被移除")
+
+// NormalizeName 去除首尾空白并校验备注名。
+func NormalizeName(name string) (string, error) {
+	name = strings.Join(strings.Fields(name), " ")
+	switch {
+	case name == "":
+		return "", errors.New("备注名不能为空")
+	case utf8.RuneCountInString(name) > MaxNameLen:
+		return "", fmt.Errorf("备注名不能超过 %d 个字符", MaxNameLen)
+	}
+	return name, nil
+}
+
+// RenameDevice 修改成员的备注名（只改本机的 Syncthing 配置，不会同步给对方）。
+func (s *Service) RenameDevice(ctx context.Context, deviceID, name string) (string, error) {
+	name, err := NormalizeName(name)
+	if err != nil {
+		return "", err
+	}
+	devs, err := s.C.Devices(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, d := range devs {
+		if d.DeviceID == deviceID {
+			return name, s.C.PatchDevice(ctx, deviceID, map[string]any{"name": name})
+		}
+	}
+	return "", ErrDeviceNotFound
 }
 
 // DisableAutoAccept 关闭所有已有成员的自动接收文件夹（从旧版本迁移）。

@@ -86,3 +86,33 @@ func TestFriendlyErrorMarker(t *testing.T) {
 		t.Fatal(msg)
 	}
 }
+
+func TestRenameDeviceAPI(t *testing.T) {
+	st := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/rest/config/devices" {
+			w.Write([]byte(`[{"deviceID":"PEER","name":"old"}]`))
+		}
+	}))
+	defer st.Close()
+	srv := httptest.NewServer(New(stclient.New(st.URL, "k"), "tok", func() string { return "running" }, nil).Handler())
+	defer srv.Close()
+	do := func(id, body string) (int, string) {
+		req, _ := http.NewRequest("PATCH", srv.URL+"/api/devices/"+id, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer tok")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+	if c, b := do("PEER", `{"name":" 王五 "}`); c != 200 || !strings.Contains(b, `"王五"`) {
+		t.Fatal(c, b)
+	}
+	if c, b := do("PEER", `{"name":""}`); c != 400 || !strings.Contains(b, "不能为空") {
+		t.Fatal(c, b)
+	}
+	if c, _ := do("NOPE", `{"name":"x"}`); c != 404 {
+		t.Fatal(c)
+	}
+}

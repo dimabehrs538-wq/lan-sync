@@ -45,6 +45,9 @@ const usage = `teamsyncd - 内网团队文件夹同步内核
   teamsyncd accept <设备ID>            接受待确认设备
   teamsyncd conflicts                  列出冲突文件
   teamsyncd scan <文件夹ID>            立即扫描
+  teamsyncd rename-device <设备ID> <备注名>  修改成员备注名（仅本机）
+  teamsyncd my-name [新名称]            查看/修改"我的名称"（其他成员会看到）
+  teamsyncd rename-device <设备ID> --announced  清除备注，改用对方自己设置的名称
   teamsyncd repair <文件夹ID> [--force]  重建丢失的 .stfolder 标记并重新扫描（空目录需 --force）
   teamsyncd relocate <文件夹ID> <新路径>  文件夹路径丢失时重新指定位置
 
@@ -163,6 +166,9 @@ func serve(args []string) {
 		log.Printf("关闭自动接收失败: %v", err)
 	}
 	store := team.OpenStore(filepath.Join(*home, "settings.json"), *foldersDir)
+	if err := ts.MigrateRemarks(ctx, store); err != nil {
+		log.Printf("迁移成员备注: %v", err)
+	}
 	if err := ts.ApplyFolderDefaults(ctx, store.Get().DefaultBaseDir); err != nil {
 		log.Printf("设置文件夹默认值失败: %v", err)
 	}
@@ -339,6 +345,19 @@ func runCLI(cmd string, args []string, home string) error {
 			return err
 		}
 		return call("POST", "/api/folders/"+args[0]+"/scan", nil)
+	case "rename-device":
+		if err := need(2); err != nil {
+			return err
+		}
+		if args[1] == "--announced" {
+			return call("PATCH", "/api/devices/"+args[0], map[string]bool{"useAnnounced": true})
+		}
+		return call("PATCH", "/api/devices/"+args[0], map[string]string{"name": strings.Join(args[1:], " ")})
+	case "my-name":
+		if len(args) == 0 {
+			return call("GET", "/api/me", nil)
+		}
+		return call("PUT", "/api/me", map[string]string{"name": strings.Join(args, " ")})
 	case "repair":
 		if err := need(1); err != nil {
 			return err

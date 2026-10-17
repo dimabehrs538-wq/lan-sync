@@ -16,6 +16,11 @@ import (
 type Settings struct {
 	DefaultBaseDir string          `json:"defaultBaseDir"`
 	Ignored        []IgnoredInvite `json:"ignored"`
+	// Remarks 记录本机用户手动设置过备注名的成员（优先于对方自己设置的名称）。
+	Remarks map[string]bool `json:"remarks,omitempty"`
+	// Announced 记录成员上线时自己通告的名称（"我的名称"）。
+	Announced       map[string]string `json:"announced,omitempty"`
+	RemarksMigrated bool              `json:"remarksMigrated,omitempty"`
 }
 
 // IgnoredInvite 记录被忽略（或本机已移除）的文件夹邀请（文件夹 + 邀请人）。
