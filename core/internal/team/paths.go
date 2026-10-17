@@ -84,6 +84,7 @@ func ResolvePath(p string) string {
 	cur := p
 	for {
 		if r, err := filepath.EvalSymlinks(cur); err == nil {
+			r = longPath(r) // Windows：把 8.3 短文件名（如 RUNNER~1）展开为长文件名，保证两边可比较
 			if rest != "" {
 				return filepath.Join(r, rest)
 			}
@@ -137,8 +138,12 @@ func (r PathRules) Check(p string, resolve func(string) string) error {
 	if r.Home != "" {
 		h := normPath(resolve(r.Home), r.Win)
 		special := map[string]string{h: "用户主目录"}
+		sep := "/"
+		if r.Win {
+			sep = `\`
+		}
 		for _, d := range []string{"Desktop", "Downloads"} {
-			special[normPath(resolve(filepath.Join(r.Home, d)), r.Win)] = map[string]string{"Desktop": "桌面", "Downloads": "下载"}[d] + "目录"
+			special[normPath(resolve(strings.TrimRight(r.Home, `/\`)+sep+d), r.Win)] = map[string]string{"Desktop": "桌面", "Downloads": "下载"}[d] + "目录"
 		}
 		if r.Win { // 桌面常被 OneDrive 重定向
 			special[normPath(r.Home+`\OneDrive\Desktop`, true)] = "桌面目录"
