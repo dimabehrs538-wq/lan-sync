@@ -26,6 +26,10 @@ var LANOptions = map[string]any{
 	"crashReportingEnabled": false,
 	"autoUpgradeIntervalH":  0,
 	"startBrowser":          false,
+	// 连接稳定性（v0.2.4）：断线后 10 秒重拨（默认 60 秒），多数短暂断线能在 60 秒防抖窗口内恢复；
+	// 私有网段始终视为局域网，避免代理 TUN 模式下的连接被当成外网（影响连接优先级与限速判断）。
+	"reconnectionIntervalS": 10,
+	"alwaysLocalNets":       []string{"192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"},
 }
 
 // DefaultIgnores 默认忽略规则（Office 临时文件、系统文件等）。

@@ -1,8 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
-import { api, eventSourceURL, notify, setTray, type Conflict, type Device, type Folder, type Invitation, type Nearby, type Settings, type Status, type UIEvent } from "./api";
+import { api, eventSourceURL, notify, setTray, type Conflict, type Device, type Folder, type Invitation, type Nearby, type Settings, type Status, type UIEvent, type ActivityItem } from "./api";
 
-interface Activity { id: number; message: string; time: string; type: string }
+type Activity = ActivityItem;
+const MAX_ACTIVITY = 500;
 interface Data {
   ready: boolean; status: Status | null; folders: Folder[]; devices: Device[]; nearby: Nearby[];
   invitations: Invitation[]; settings: Settings | null; conflicts: Conflict[]; activity: Activity[];
@@ -53,7 +54,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
       es.onmessage = (m) => {
         const e: UIEvent = JSON.parse(m.data);
         if (e.message) {
-          setActivity((a) => [{ id: ++seq.current, message: e.message!, time: e.time, type: e.type }, ...a].slice(0, 100));
+          // 内核为每条动态分配 activityId；同 ID（例如“连接不稳定”合并记录）原地更新并置顶
+          const item: Activity = { id: e.activityId ?? -(++seq.current), message: e.message!, time: e.time, type: e.type, key: e.key };
+          setActivity((a) => [item, ...a.filter((x) => x.id !== item.id)].slice(0, MAX_ACTIVITY));
           if (e.notify) { notify(e.message); toast(e.message); }
         }
         clearTimeout(timer);
@@ -66,6 +69,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         try { await api("GET", "/api/status"); break; } catch { await new Promise((r) => setTimeout(r, 1000)); }
       }
       await refresh();
+      try { setActivity((await api<Activity[]>("GET", "/api/activity")) ?? []); } catch { /* 旧内核无此接口 */ }
       connect();
     })();
     const iv = setInterval(refresh, 8000);

@@ -21,6 +21,8 @@ type Settings struct {
 	// Announced 记录成员上线时自己通告的名称（"我的名称"）。
 	Announced       map[string]string `json:"announced,omitempty"`
 	RemarksMigrated bool              `json:"remarksMigrated,omitempty"`
+	// PresenceNotify 成员上下线是否弹系统通知（默认关闭；邀请、冲突等通知不受影响）
+	PresenceNotify bool `json:"presenceNotify,omitempty"`
 }
 
 // IgnoredInvite 记录被忽略（或本机已移除）的文件夹邀请（文件夹 + 邀请人）。

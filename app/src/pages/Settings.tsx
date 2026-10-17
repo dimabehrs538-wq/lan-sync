@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowUpCircle, Bell, FolderOpen, Info, Laptop, Moon, Power, Save, ShieldCheck, Sun } from "lucide-react";
+import { ArrowUpCircle, Bell, FolderOpen, Wifi, Info, Laptop, Moon, Power, Save, ShieldCheck, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -77,6 +77,11 @@ export default function Settings() {
           <Separator />
           <Row icon={Bell} title="文件变更通知" desc="收到文件夹邀请、成员请求加入、成员修改文件时弹出系统通知">
             <Switch checked={notify} onCheckedChange={(v) => { setNotify(v); localStorage.setItem("notify", v ? "1" : "0"); }} />
+          </Row>
+          <Separator />
+          <Row icon={Wifi} title="上下线通知" desc="成员上线、离线或连接不稳定时弹出系统通知（默认关闭，60 秒内重连不会提示；动态记录不受影响）">
+            <Switch checked={!!settings?.presenceNotify} disabled={!settings} onCheckedChange={(v) =>
+              run(() => api("PUT", "/api/settings", { presenceNotify: v }), v ? "已开启上下线通知" : "已关闭上下线通知")} />
           </Row>
         </CardContent>
       </Card>

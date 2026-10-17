@@ -4,7 +4,10 @@ export interface CoreInfo { port: number; token: string }
 export interface Status {
   engine: string; myID?: string; uptime?: number; syncthingVersion?: string;
   connected?: number; folders?: number; syncing?: boolean; error?: string;
+  /** 10 分钟内断开 >=3 次的成员 */
+  unstable?: UnstableDevice[];
 }
+export interface UnstableDevice { device: string; name: string; count: number }
 export interface FolderStatus { state: string; globalFiles: number; localFiles: number; needFiles: number; needBytes: number; globalBytes: number; errors: number; error?: string }
 export interface Folder {
   id: string; label: string; path: string; type: string; paused: boolean;
@@ -16,11 +19,12 @@ export interface Folder {
 export interface FolderProblem { kind: "markerMissing" | "pathMissing" | "other"; message: string; pathExists: boolean; pathEmpty: boolean; inGitRepo: boolean }
 export interface FolderMember { deviceID: string; name: string; connected: boolean; remoteState: "valid" | "notSharing" | "paused" | "unknown"; completion: number }
 export interface Invitation { folderID: string; label: string; deviceID: string; deviceName: string; time: string; offerTime: string; suggestPath: string }
-export interface Settings { defaultBaseDir: string; ignoredCount: number }
+export interface Settings { defaultBaseDir: string; ignoredCount: number; presenceNotify?: boolean }
 export interface Device { deviceID: string; name: string; connected: boolean; address?: string; self: boolean; paused: boolean; remark?: boolean; announcedName?: string }
 export interface Nearby { deviceID: string; addresses: string[]; name?: string; pending: boolean }
 export interface Conflict { path: string; original: string; time: string; device: string; folderID: string; folderLabel: string }
-export interface UIEvent { type: string; message?: string; notify: boolean; time: string; data?: unknown }
+export interface UIEvent { type: string; message?: string; notify: boolean; time: string; data?: unknown; key?: string; activityId?: number }
+export interface ActivityItem { id: number; message: string; time: string; type: string; key?: string }
 
 let core: CoreInfo | null = null;
 

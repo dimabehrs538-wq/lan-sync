@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lan-sync/teamsync/core/internal/activity"
 	"github.com/lan-sync/teamsync/core/internal/conflict"
 	"github.com/lan-sync/teamsync/core/internal/stclient"
 	"github.com/lan-sync/teamsync/core/internal/team"
@@ -26,7 +27,14 @@ type UIEvent struct {
 	Notify  bool      `json:"notify"`
 	Time    time.Time `json:"time"`
 	Data    any       `json:"data,omitempty"`
+	// Key 非空时，最近动态中同 Key 的记录原地更新（例如反复断线合并为一条）
+	Key        string `json:"key,omitempty"`
+	ActivityID int64  `json:"activityId,omitempty"`
+	merge      time.Duration
 }
+
+// presenceTypes 为上下线类事件，是否弹系统通知由设置“上下线通知”决定（默认关闭）
+var presenceTypes = map[string]bool{"DeviceConnected": true, "DeviceDisconnected": true, "DeviceUnstable": true}
 
 type Server struct {
 	C           *stclient.Client
@@ -34,16 +42,27 @@ type Server struct {
 	Token       string
 	EngineState func() string
 	Store       *team.Store
+	Activity    *activity.Log
+	Presence    *Presence
 
 	mu   sync.Mutex
 	subs map[chan UIEvent]struct{}
 }
 
 func New(c *stclient.Client, token string, state func() string, store *team.Store) *Server {
-	return &Server{C: c, Team: &team.Service{C: c}, Token: token, EngineState: state, Store: store, subs: map[chan UIEvent]struct{}{}}
+	s := &Server{C: c, Team: &team.Service{C: c}, Token: token, EngineState: state, Store: store, Activity: activity.Open(""), subs: map[chan UIEvent]struct{}{}}
+	s.Presence = NewPresence(s.Publish)
+	return s
 }
 
 func (s *Server) Publish(e UIEvent) {
+	if presenceTypes[e.Type] {
+		e.Notify = e.Message != "" && s.Store != nil && s.Store.Get().PresenceNotify
+	}
+	if e.Message != "" && s.Activity != nil {
+		it := s.Activity.Add(activity.Item{Type: e.Type, Message: e.Message, Time: e.Time, Key: e.Key}, e.merge)
+		e.ActivityID = it.ID
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for ch := range s.subs {
@@ -84,6 +103,8 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("GET /api/conflicts", s.conflicts)
 	m.HandleFunc("POST /api/conflicts/resolve", s.resolveConflict)
 	m.HandleFunc("GET /api/events", s.events)
+	m.HandleFunc("GET /api/activity", s.listActivity)
+	m.HandleFunc("DELETE /api/activity", s.clearActivity)
 	return s.cors(s.auth(m))
 }
 
@@ -191,6 +212,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out["connected"] = n
+	out["unstable"] = s.Presence.Unstable()
 	folders, _ := s.C.Folders(ctx)
 	syncing := false
 	for _, f := range folders {
@@ -543,16 +565,35 @@ func (s *Server) ignoreInvitation(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 	st := s.Store.Get()
-	writeJSON(w, map[string]any{"defaultBaseDir": st.DefaultBaseDir, "ignoredCount": len(st.Ignored)})
+	writeJSON(w, map[string]any{"defaultBaseDir": st.DefaultBaseDir, "ignoredCount": len(st.Ignored), "presenceNotify": st.PresenceNotify})
+}
+
+func (s *Server) listActivity(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, s.Activity.List())
+}
+func (s *Server) clearActivity(w http.ResponseWriter, r *http.Request) {
+	s.Activity.Clear()
+	respond(w, nil, nil)
 }
 
 func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		DefaultBaseDir string `json:"defaultBaseDir"`
+		PresenceNotify *bool  `json:"presenceNotify"`
 	}
-	if err := decode(r, &in); err != nil || in.DefaultBaseDir == "" {
+	if err := decode(r, &in); err != nil || (in.DefaultBaseDir == "" && in.PresenceNotify == nil) {
 		writeErr(w, 400, fmt.Errorf("默认目录不能为空"))
 		return
+	}
+	if in.PresenceNotify != nil {
+		if err := s.Store.Update(func(st *team.Settings) { st.PresenceNotify = *in.PresenceNotify }); err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		if in.DefaultBaseDir == "" {
+			respond(w, nil, nil)
+			return
+		}
 	}
 	if err := os.MkdirAll(in.DefaultBaseDir, 0o755); err != nil {
 		writeErr(w, 400, fmt.Errorf("无法创建目录：%v", err))
@@ -656,6 +697,20 @@ func (s *Server) RunEventBridge(ctx context.Context) {
 					names.Invalidate()
 				}
 			}
+		}
+		if e.Type == "DeviceConnected" || e.Type == "DeviceDisconnected" {
+			var d struct {
+				ID string `json:"id"`
+			}
+			if json.Unmarshal(e.Data, &d) == nil && d.ID != "" {
+				name := names.Lookup(ctx)(d.ID)
+				if e.Type == "DeviceConnected" {
+					s.Presence.Connected(d.ID, name)
+				} else {
+					s.Presence.Disconnected(d.ID, name)
+				}
+			}
+			return
 		}
 		if ue, ok := Translate(e, names.Lookup(ctx)); ok {
 			if e.Type == "PendingFoldersChanged" {

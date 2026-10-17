@@ -19,8 +19,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lan-sync/teamsync/core/internal/activity"
 	"github.com/lan-sync/teamsync/core/internal/api"
 	"github.com/lan-sync/teamsync/core/internal/engine"
+	"github.com/lan-sync/teamsync/core/internal/rotlog"
 	"github.com/lan-sync/teamsync/core/internal/stclient"
 	"github.com/lan-sync/teamsync/core/internal/team"
 )
@@ -36,6 +38,8 @@ const usage = `teamsyncd - 内网团队文件夹同步内核
   teamsyncd remove-folder <文件夹ID> [--delete-files] [--permanent]  仅在本机移除文件夹（可同时删除本地文件，默认进回收站）
   teamsyncd reinvite <文件夹ID> <设备ID>          重新邀请成员
   teamsyncd invites                               查看收到的文件夹邀请
+  teamsyncd activity                              查看最近动态（最多 500 条 / 7 天）
+  teamsyncd presence-notify on|off                成员上下线系统通知开关（默认关）
   teamsyncd accept-invite <文件夹ID> <邀请人设备ID> <本地路径>
   teamsyncd ignore-invite <文件夹ID> <邀请人设备ID>
   teamsyncd settings [默认存放目录]               查看/修改接收邀请的默认目录
@@ -141,8 +145,17 @@ func serve(args []string) {
 	if err := os.MkdirAll(*home, 0o700); err != nil {
 		log.Fatal(err)
 	}
-	logf, _ := os.OpenFile(filepath.Join(*home, "syncthing.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-	eng, err := engine.New(engine.Config{Binary: *stBin, Home: filepath.Join(*home, "st"), LogOut: logf, Restart: true})
+	// 日志按大小轮换，磁盘占用有上限：syncthing.log 最多 10 MiB×(1+2)，teamsyncd.log 最多 5 MiB×(1+1)
+	var logOut io.Writer = io.Discard
+	if lw, err := rotlog.Open(filepath.Join(*home, "syncthing.log"), 10<<20, 2); err == nil {
+		defer lw.Close()
+		logOut = lw
+	}
+	if cw, err := rotlog.Open(filepath.Join(*home, "teamsyncd.log"), 5<<20, 1); err == nil {
+		defer cw.Close()
+		log.SetOutput(io.MultiWriter(os.Stderr, cw))
+	}
+	eng, err := engine.New(engine.Config{Binary: *stBin, Home: filepath.Join(*home, "st"), LogOut: logOut, Restart: true})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -182,6 +195,8 @@ func serve(args []string) {
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
 	srv := api.New(c, *token, func() string { return string(eng.State()) }, store)
+	srv.Activity = activity.Open(filepath.Join(*home, "activity.json"))
+	defer srv.Activity.Flush()
 	eng.OnState = func(s engine.State) {
 		srv.Publish(api.UIEvent{Type: "EngineState", Time: time.Now(), Data: map[string]string{"state": string(s)}})
 	}
@@ -298,6 +313,13 @@ func runCLI(cmd string, args []string, home string) error {
 		return call("POST", "/api/folders/"+args[0]+"/reinvite", map[string]string{"deviceID": args[1]})
 	case "invites":
 		return call("GET", "/api/invitations", nil)
+	case "activity":
+		return call("GET", "/api/activity", nil)
+	case "presence-notify":
+		if err := need(1); err != nil {
+			return err
+		}
+		return call("PUT", "/api/settings", map[string]bool{"presenceNotify": args[0] == "on"})
 	case "accept-invite", "ignore-invite":
 		if err := need(2); err != nil {
 			return err

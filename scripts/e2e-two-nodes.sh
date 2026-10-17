@@ -114,4 +114,26 @@ t C remove-folder "$FID" --delete-files | grep -q '"trashed": true' && echo "✔
 ls "$W/C-xdg/Trash/files/" | grep -q "C-设计" && echo "✔ 回收站中可找回"
 sleep 8
 [ -f "$W/A-docs/接口.md" ] && [ -f "$W/A-docs/新文件.md" ] && echo "✔ A 的文件不受影响" || { echo "✘ A 文件受影响"; ls -la "$W/A-docs"; exit 1; }
+# ---- v0.2.4：上下线防抖、断线合并、横幅、存储上限 ----
+grep -q '<reconnectionIntervalS>10</reconnectionIntervalS>' "$W/A/st/config.xml" && echo "✔ 重连间隔 10 秒"
+grep -q '<alwaysLocalNet>192.168.0.0/16</alwaysLocalNet>' "$W/A/st/config.xml" && echo "✔ 私有网段视为局域网"
+grep -q '<relaysEnabled>false</relaysEnabled>' "$W/A/st/config.xml" && grep -q '<globalAnnounceEnabled>false</globalAnnounceEnabled>' "$W/A/st/config.xml" && echo "✔ 仍为纯内网（中继/全局发现关闭）"
+[ -s "$W/A/syncthing.log" ] && [ -s "$W/A/teamsyncd.log" ] && echo "✔ 日志写入可轮换的日志文件"
+t A activity | grep -q '已上线' && echo "✔ 最近动态由内核记录"
+t A activity | grep -q '已离线' && { echo "✘ B 重启后 60 秒内重连，不应出现离线动态"; exit 1; } || echo "✔ 60 秒内重连不提示离线"
+t A settings | grep -q '"presenceNotify": false' && echo "✔ 上下线通知默认关闭"
+t A presence-notify on >/dev/null && t A settings | grep -q '"presenceNotify": true' && echo "✔ 上下线通知可开启"
+restartB(){ kill "${PID[B]}"; wait "${PID[B]}" 2>/dev/null || true; rm -f "$W/B/daemon.json"; start B
+  until [ -f "$W/B/daemon.json" ]; do sleep 0.5; done
+  wait_for "t A devices | python3 -c \"import json,sys; sys.exit(0 if [x for x in json.load(sys.stdin) if x['deviceID']=='$IB'][0]['connected'] else 1)\"" "B 重新连上 A" 60; }
+for i in 1 2 3; do restartB; done
+wait_for "t A status | python3 -c \"import json,sys; u=json.load(sys.stdin)['unstable']; sys.exit(0 if any(x['device']=='$IB' and x['count']>=3 for x in u) else 1)\"" "B 10 分钟内断开 ≥3 次 → 横幅数据 unstable" 10
+t A activity | python3 -c "
+import json,sys
+a=json.load(sys.stdin); u=[x for x in a if x.get('key')=='unstable:$IB']
+assert len(u)==1, u
+assert '连接不稳定（5 分钟内断开' in u[0]['message'] and a[0]['key']=='unstable:$IB', a[:3]
+print('✔ 反复断线合并为一条：'+u[0]['message'])"
+t A activity | grep -q '已离线' && { echo "✘ 抖动期间不应逐条提示离线"; exit 1; } || echo "✔ 抖动期间没有逐条离线动态"
+sleep 3; [ -s "$W/A/activity.json" ] && echo "✔ 最近动态已保存到 activity.json"
 echo "全部通过"

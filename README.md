@@ -65,6 +65,8 @@ app/icon-src/         图标源文件（icon.svg 应用图标、tray.svg 托盘�
 2. 在页面底部 **Artifacts** 下载 `TeamSync-windows-x64`（zip，内含 NSIS 安装程序 `TeamSync_x.y.z_x64-setup.exe` 和 MSI 包 `TeamSync_x.y.z_x64_en-US.msi`）；
 3. 正式版本请到 [Releases](https://github.com/dimabehrs538-wq/lan-sync/releases/latest) 下载。
 
+本机数据存放在哪、会不会无限增大：见 [docs/storage.md](docs/storage.md)。
+
 > 安装包暂未代码签名，首次运行 Windows SmartScreen 可能提示"未知发布者"，点"更多信息 → 仍要运行"即可。
 
 ## 发布新版本与自动更新
