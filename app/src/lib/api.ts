@@ -13,7 +13,8 @@ export interface Folder {
   status?: FolderStatus; conflicts: number; members: FolderMember[];
   problem?: FolderProblem;
 }
-export interface FolderProblem { kind: "markerMissing" | "pathMissing" | "other"; message: string; pathExists: boolean; pathEmpty: boolean; inGitRepo: boolean }
+export interface PathInfo { ok: boolean; error?: string; exists: boolean; empty: boolean; entries: number }
+export interface FolderProblem { kind: "markerMissing" | "pathMissing" | "overlap" | "other"; message: string; pathExists: boolean; pathEmpty: boolean; inGitRepo: boolean }
 export interface FolderMember { deviceID: string; name: string; connected: boolean; remoteState: "valid" | "notSharing" | "paused" | "unknown"; completion: number }
 export interface Invitation { folderID: string; label: string; deviceID: string; deviceName: string; time: string; offerTime: string; suggestPath: string }
 export interface Settings { defaultBaseDir: string; ignoredCount: number; presenceNotify?: boolean }

@@ -45,12 +45,12 @@ func TestRemoveFolder(t *testing.T) {
 	if !st.IsIgnored("f1", "PEER") || st.IsIgnored("f1", "ME") {
 		t.Fatal("peer offer should be suppressed")
 	}
-	if inv := FilterInvitations(pending("f1", "PEER", "x", "t"), nil, nil, st); len(inv) != 0 {
+	if inv := FilterInvitations(pending("f1", "PEER", "x", "t"), nil, nil, st, nil); len(inv) != 0 {
 		t.Fatal("should not resurface")
 	}
 	// 对方重新邀请（撤回事件）后重新出现
 	st.UnignorePair("f1", "PEER")
-	if inv := FilterInvitations(pending("f1", "PEER", "x", "t2"), nil, nil, st); len(inv) != 1 {
+	if inv := FilterInvitations(pending("f1", "PEER", "x", "t2"), nil, nil, st, nil); len(inv) != 1 {
 		t.Fatal("re-invite should show")
 	}
 	// 同时删除文件

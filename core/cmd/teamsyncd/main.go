@@ -38,6 +38,8 @@ const usage = `teamsyncd - 内网团队文件夹同步内核
   teamsyncd remove-folder <文件夹ID> [--delete-files] [--permanent]  仅在本机移除文件夹（可同时删除本地文件，默认进回收站）
   teamsyncd reinvite <文件夹ID> <设备ID>          重新邀请成员
   teamsyncd invites                               查看收到的文件夹邀请
+  teamsyncd pause|resume <文件夹ID>                暂停/恢复文件夹同步
+  teamsyncd check-path <路径> [文件夹ID]               检查位置是否可用（不能与已有文件夹相同/嵌套）
   teamsyncd activity                              查看最近动态（最多 500 条 / 7 天）
   teamsyncd presence-notify on|off                成员上下线系统通知开关（默认关）
   teamsyncd accept-invite <文件夹ID> <邀请人设备ID> <本地路径>
@@ -201,6 +203,7 @@ func serve(args []string) {
 		srv.Publish(api.UIEvent{Type: "EngineState", Time: time.Now(), Data: map[string]string{"state": string(s)}})
 	}
 	go srv.RunEventBridge(ctx)
+	go srv.RunOverlapGuard(ctx, time.Minute)
 	hs := &http.Server{Handler: srv.Handler()}
 	go hs.Serve(ln)
 
@@ -313,6 +316,21 @@ func runCLI(cmd string, args []string, home string) error {
 		return call("POST", "/api/folders/"+args[0]+"/reinvite", map[string]string{"deviceID": args[1]})
 	case "invites":
 		return call("GET", "/api/invitations", nil)
+	case "pause", "resume":
+		if err := need(1); err != nil {
+			return err
+		}
+		return call("POST", "/api/folders/"+args[0]+"/"+cmd, nil)
+	case "check-path":
+		if err := need(1); err != nil {
+			return err
+		}
+		p, _ := filepath.Abs(args[0])
+		body := map[string]string{"path": p}
+		if len(args) > 1 {
+			body["folderID"] = args[1]
+		}
+		return call("POST", "/api/path-check", body)
 	case "activity":
 		return call("GET", "/api/activity", nil)
 	case "presence-notify":

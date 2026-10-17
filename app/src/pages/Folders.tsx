@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Avatar, Dot, Empty, PageHeader } from "@/components/common";
-import { api, ApiError, formatBytes, isTauri, short, STATE_CN, type Device, type Folder, type FolderMember, type Invitation } from "@/lib/api";
+import { api, ApiError, formatBytes, isTauri, short, STATE_CN, type Device, type Folder, type FolderMember, type Invitation, type PathInfo } from "@/lib/api";
 import { useData } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
@@ -117,24 +117,47 @@ function MembersDialog({ folder, onClose }: { folder: Folder | null; onClose: ()
   );
 }
 
+/** 提交前检查位置：不能与已有文件夹相同/嵌套等（内核返回中文原因），并返回是否非空 */
+export const checkPath = (path: string, folderID?: string) => api<PathInfo>("POST", "/api/path-check", { path, folderID });
+
 function AcceptDialog({ inv, onClose }: { inv: Invitation | null; onClose: () => void }) {
-  const { run } = useData();
+  const { run, settings } = useData();
   const [path, setPath] = useState("");
-  useEffect(() => { if (inv) setPath(inv.suggestPath); }, [inv]);
+  const [error, setError] = useState("");
+  const [nonEmpty, setNonEmpty] = useState(0); // >0：目录非空，等待确认
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (inv) { setPath(inv.suggestPath); setError(""); setNonEmpty(0); } }, [inv]);
+  const change = (p: string) => { setPath(p); setError(""); setNonEmpty(0); };
+  const submit = async (confirmed: boolean) => {
+    if (!inv) return;
+    setBusy(true);
+    try {
+      const info = await checkPath(path, inv.folderID);
+      if (!info.ok) { setError(info.error || "该位置不可用"); return; }
+      if (info.exists && !info.empty && !confirmed) { setNonEmpty(info.entries); return; }
+      if (await run(() => api("POST", "/api/invitations/accept", { folderID: inv.folderID, deviceID: inv.deviceID, label: inv.label, path }), `已加入「${inv.label}」，开始同步`)) onClose();
+    } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+  };
   return (
     <Dialog open={!!inv} onOpenChange={(v) => !v && onClose()}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>加入「{inv?.label}」</DialogTitle>
-          <DialogDescription>{inv?.deviceName || short(inv?.deviceID)} 邀请你加入这个团队文件夹。请选择保存到本机的位置，可以是已有文件夹。</DialogDescription>
+          <DialogDescription>{inv?.deviceName || short(inv?.deviceID)} 邀请你加入这个团队文件夹。每个团队文件夹需要单独的位置，默认放在“接收文件夹的默认位置”下以文件夹名命名的子文件夹中。</DialogDescription>
         </DialogHeader>
-        <div className="space-y-2"><Label>保存位置</Label><PathField value={path} onChange={setPath} /></div>
-        <p className="text-xs text-muted-foreground">默认位置可在“设置 → 接收文件夹的默认位置”中修改。</p>
+        <div className="space-y-2"><Label>保存位置</Label><PathField value={path} onChange={change} /></div>
+        {error ? (
+          <p className="flex gap-1.5 rounded-md border border-red-500/30 bg-red-500/5 p-2.5 text-xs text-red-700 dark:text-red-400" data-testid="path-error"><AlertTriangle className="mt-0.5 size-3.5 shrink-0" />{error}</p>
+        ) : nonEmpty > 0 ? (
+          <p className="flex gap-1.5 rounded-md border border-amber-400/40 bg-amber-500/10 p-2.5 text-xs text-amber-800 dark:text-amber-300" data-testid="path-nonempty"><AlertTriangle className="mt-0.5 size-3.5 shrink-0" />该文件夹不是空的（已有 {nonEmpty} 项）。加入后，其中的文件会与「{inv?.label}」的其他成员互相同步。确定要使用这个位置吗？</p>
+        ) : (
+          <p className="text-xs text-muted-foreground">默认位置{settings?.defaultBaseDir ? <>（<span className="font-mono">{settings.defaultBaseDir}</span>）</> : ""}可在“设置 → 接收文件夹的默认位置”中修改。</p>
+        )}
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>取消</Button>
-          <Button disabled={!path} onClick={async () => {
-            if (inv && await run(() => api("POST", "/api/invitations/accept", { folderID: inv.folderID, deviceID: inv.deviceID, label: inv.label, path }), `已加入「${inv.label}」，开始同步`)) onClose();
-          }}><FolderInput />加入并同步</Button>
+          {nonEmpty > 0
+            ? <Button variant="destructive" disabled={busy} onClick={() => submit(true)}><FolderInput />仍然使用该位置</Button>
+            : <Button disabled={!path || busy} onClick={() => submit(false)}><FolderInput />加入并同步</Button>}
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -221,9 +244,17 @@ function ProblemBanner({ folder, onRemove }: { folder: Folder; onRemove: () => v
       else toast.error("修复失败", { description: (e as Error).message });
     } finally { setBusy(false); }
   };
+  const [pendingPath, setPendingPath] = useState<{ path: string; entries: number } | null>(null);
+  const doRelocate = (path: string) => run(() => api("POST", `/api/folders/${folder.id}/relocate`, { path }), `已将「${folder.label || folder.id}」指向新位置`).then(() => setPendingPath(null));
   const relocate = async () => {
     const path = await pickDir();
-    if (path) await run(() => api("POST", `/api/folders/${folder.id}/relocate`, { path }), `已将「${folder.label || folder.id}」指向新位置`);
+    if (!path) return;
+    try {
+      const info = await checkPath(path, folder.id);
+      if (!info.ok) { toast.error("不能使用该位置", { description: info.error }); return; }
+      if (info.exists && !info.empty) { setPendingPath({ path, entries: info.entries }); return; }
+      await doRelocate(path);
+    } catch (e) { toast.error("操作失败", { description: (e as Error).message }); }
   };
   return (
     <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-xs" data-testid="folder-problem">
@@ -234,10 +265,18 @@ function ProblemBanner({ folder, onRemove }: { folder: Folder; onRemove: () => v
       {confirmEmpty && (
         <p className="mt-2 pl-6 font-medium text-red-700 dark:text-red-400">文件夹是空的。如果文件确实丢失，修复后其他成员那里的文件也可能被删除。建议先确认文件是否被移走；确定这是全新的空文件夹再继续。</p>
       )}
+      {pendingPath && (
+        <p className="mt-2 pl-6 font-medium text-amber-700 dark:text-amber-400">所选文件夹 <span className="font-mono">{pendingPath.path}</span> 不是空的（已有 {pendingPath.entries} 项），其中的文件会与其他成员互相同步。确定使用？</p>
+      )}
       <div className="mt-2 flex flex-wrap gap-2 pl-6">
+        {pendingPath && <><Button size="sm" variant="destructive" onClick={() => doRelocate(pendingPath.path)}>仍然使用该位置</Button><Button size="sm" variant="outline" onClick={() => setPendingPath(null)}>取消</Button></>}
         {p.kind === "markerMissing" && (confirmEmpty
           ? <><Button size="sm" variant="destructive" disabled={busy} onClick={() => repair(true)}><Wrench />仍然修复</Button><Button size="sm" variant="outline" onClick={() => setConfirmEmpty(false)}>取消</Button></>
           : <Button size="sm" disabled={busy} onClick={() => repair(false)}><Wrench />修复</Button>)}
+        {p.kind === "overlap" && !pendingPath && <>
+          {isTauri() && <Button size="sm" onClick={relocate}><FolderOpen />重新选择位置</Button>}
+          <Button size="sm" variant="outline" onClick={onRemove}><FolderMinus />移除</Button>
+        </>}
         {p.kind === "pathMissing" && <>
           {isTauri() && <Button size="sm" onClick={relocate}><FolderOpen />重新选择位置</Button>}
           <Button size="sm" variant="outline" onClick={onRemove}><FolderMinus />移除</Button>
@@ -323,7 +362,7 @@ export default function Folders() {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="font-medium">{f.label || f.id}</span>
-                        <Badge variant="outline" className="gap-1.5"><Dot tone={tone} pulse={tone === "amber"} />{f.problem ? (f.problem.kind === "pathMissing" ? "路径丢失" : f.problem.kind === "markerMissing" ? "需要修复" : "出错") : STATE_CN[st] ?? st}</Badge>
+                        <Badge variant="outline" className="gap-1.5"><Dot tone={tone} pulse={tone === "amber"} />{f.problem ? (f.problem.kind === "overlap" ? "位置重叠" : f.problem.kind === "pathMissing" ? "路径丢失" : f.problem.kind === "markerMissing" ? "需要修复" : "出错") : STATE_CN[st] ?? st}</Badge>
                         {f.conflicts > 0 && <Badge className="bg-red-500 text-white">{f.conflicts} 个冲突</Badge>}
                       </div>
                       <div className="mt-0.5 truncate font-mono text-xs text-muted-foreground">{f.path}</div>

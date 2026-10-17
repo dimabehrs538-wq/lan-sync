@@ -23,6 +23,10 @@ type Settings struct {
 	RemarksMigrated bool              `json:"remarksMigrated,omitempty"`
 	// PresenceNotify 成员上下线是否弹系统通知（默认关闭；邀请、冲突等通知不受影响）
 	PresenceNotify bool `json:"presenceNotify,omitempty"`
+	// OverlapPaused 记录因与其他文件夹位置重叠而被自动暂停的文件夹
+	OverlapPaused map[string]bool `json:"overlapPaused,omitempty"`
+	// AddedAt 记录文件夹在本机添加（新建/接受邀请）的时间，用于判断重叠时哪个是后添加的
+	AddedAt map[string]time.Time `json:"addedAt,omitempty"`
 }
 
 // IgnoredInvite 记录被忽略（或本机已移除）的文件夹邀请（文件夹 + 邀请人）。
@@ -134,7 +138,7 @@ type Invitation struct {
 }
 
 // FilterInvitations 把 Syncthing 的待处理文件夹转成邀请列表，去掉已忽略的和本机已有的文件夹。
-func FilterInvitations(pending map[string]stclient.PendingFolder, have map[string]bool, names map[string]string, st *Store) []Invitation {
+func FilterInvitations(pending map[string]stclient.PendingFolder, have map[string]bool, names map[string]string, st *Store, existing []stclient.Folder) []Invitation {
 	base := st.Get().DefaultBaseDir
 	out := []Invitation{}
 	for fid, p := range pending {
@@ -151,29 +155,11 @@ func FilterInvitations(pending map[string]stclient.PendingFolder, have map[strin
 			}
 			t, _ := time.Parse(time.RFC3339Nano, o.Time)
 			out = append(out, Invitation{FolderID: fid, Label: label, DeviceID: dev, DeviceName: names[dev], Time: t, OfferTime: o.Time,
-				SuggestPath: filepath.Join(base, SafeName(label))})
+				SuggestPath: SuggestPath(base, label, existing)})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Time.After(out[j].Time) })
 	return out
-}
-
-// SafeName 去掉 Windows 文件名非法字符。
-func SafeName(s string) string {
-	r := []rune{}
-	for _, c := range s {
-		switch c {
-		case '<', '>', ':', '"', '/', '\\', '|', '?', '*':
-			c = '_'
-		}
-		if c >= 32 {
-			r = append(r, c)
-		}
-	}
-	if len(r) == 0 {
-		return "folder"
-	}
-	return string(r)
 }
 
 // Invitations 查询当前邀请。
@@ -196,7 +182,7 @@ func (s *Service) Invitations(ctx context.Context, st *Store) ([]Invitation, err
 			names[d.DeviceID] = d.Name
 		}
 	}
-	return FilterInvitations(pending, have, names, st), nil
+	return FilterInvitations(pending, have, names, st, folders), nil
 }
 
 // ReconnectPause 是移除文件夹后暂停连接的时长（测试中可调小）。

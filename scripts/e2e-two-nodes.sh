@@ -135,4 +135,42 @@ assert '连接不稳定（5 分钟内断开' in u[0]['message'] and a[0]['key']=
 print('✔ 反复断线合并为一条：'+u[0]['message'])"
 t A activity | grep -q '已离线' && { echo "✘ 抖动期间不应逐条提示离线"; exit 1; } || echo "✔ 抖动期间没有逐条离线动态"
 sleep 3; [ -s "$W/A/activity.json" ] && echo "✔ 最近动态已保存到 activity.json"
+# ---- v0.2.6：文件夹位置不能相同/嵌套；默认放到 默认位置\文件夹名；重叠时自动暂停 ----
+fails(){ "$@" 2>&1 || true; }  # 预期失败的命令（pipefail 下避免整条管道失败）
+F3=$("$T" add-folder 周报 "$W/A-周报" "$IC" --home "$W/A" | sed -n 's/.*"id": "\(.*\)".*/\1/p' | head -1)
+F4=$("$T" add-folder 方案 "$W/A-方案" "$IC" --home "$W/A" | sed -n 's/.*"id": "\(.*\)".*/\1/p' | head -1)
+F5=$("$T" add-folder 周报 "$W/A-周报2" "$IC" --home "$W/A" | sed -n 's/.*"id": "\(.*\)".*/\1/p' | head -1)
+wait_for "t C invites | grep -q $F3 && t C invites | grep -q $F4 && t C invites | grep -q $F5" "C 收到 3 个文件夹邀请" 60
+t C invites | grep -q "\"suggestPath\": \"$W/C-base/周报\"" && echo "✔ 默认位置为 默认目录/文件夹名" || { echo "✘ 默认位置为 默认目录/文件夹名"; exit 1; }
+fails t C accept-invite "$F3" "$IA" "$W/C-base" | grep -q '默认位置' && echo "✔ 拒绝直接使用默认目录本身" || { echo "✘ 拒绝直接使用默认目录本身"; exit 1; }
+t C accept-invite "$F3" "$IA" >/dev/null && t C accept-invite "$F4" "$IA" >/dev/null && echo "✔ 两个邀请按默认位置接受" || { echo "✘ 两个邀请按默认位置接受"; exit 1; }
+fails t C accept-invite "$F5" "$IA" "$W/C-base/周报" | grep -q '已被团队文件夹「周报」使用' && echo "✔ 拒绝与已有文件夹相同的位置" || { echo "✘ 拒绝与已有文件夹相同的位置"; exit 1; }
+fails t C accept-invite "$F5" "$IA" "$W/C-base/周报/子目录" | grep -q '之内' && echo "✔ 拒绝放在已有文件夹之内" || { echo "✘ 拒绝放在已有文件夹之内"; exit 1; }
+t C invites | grep -q "\"suggestPath\": \"$W/C-base/周报 (2)\"" && echo "✔ 同名文件夹默认位置自动变为「周报 (2)」" || { echo "✘ 同名文件夹默认位置自动变为「周报 (2)」"; exit 1; }
+t C accept-invite "$F5" "$IA" >/dev/null && echo "✔ 同名文件夹按「周报 (2)」接受" || { echo "✘ 同名文件夹按「周报 (2)」接受"; exit 1; }
+t C folders | python3 -c "
+import json,sys
+p=sorted(f['path'] for f in json.load(sys.stdin) if f['id'] in ('$F3','$F4','$F5'))
+assert p==sorted(['$W/C-base/周报','$W/C-base/方案','$W/C-base/周报 (2)']), p
+print('✔ 3 个文件夹各自独立：'+'、'.join(x.rsplit('/',1)[1] for x in p))"
+fails t A add-folder 嵌套 "$W/A-docs/子" | grep -q '之内' && echo "✔ 新建文件夹不能放在已有文件夹之内" || { echo "✘ 新建文件夹不能放在已有文件夹之内"; exit 1; }
+fails t A add-folder 包含 "$W" | grep -q '包含了团队文件夹' && echo "✔ 新建文件夹不能包含已有文件夹" || { echo "✘ 新建文件夹不能包含已有文件夹"; exit 1; }
+t A check-path "$W/A-docs" "$FID" | grep -q '"empty": false' && echo "✔ 位置检查报告目录非空（界面据此确认）" || { echo "✘ 位置检查报告目录非空（界面据此确认）"; exit 1; }
+# 模拟旧版本留下的重叠：直接改配置把「临时」指向「设计文档」内部，重启后应被自动暂停
+kill "${PID[A]}"; wait "${PID[A]}" 2>/dev/null || true; rm -f "$W/A/daemon.json"
+mkdir -p "$W/A-docs/嵌套/.stfolder"
+python3 - "$W/A/st/config.xml" "$FID2" "$W/A-docs/嵌套" <<'PY'
+import sys,re
+p,fid,new=sys.argv[1:]; s=open(p,encoding='utf-8').read()
+s2=re.sub(r'(<folder id="%s"[^>]*path=")[^"]*(")'%re.escape(fid), lambda m:m.group(1)+new+m.group(2), s)
+assert s2!=s; open(p,'w',encoding='utf-8').write(s2)
+PY
+start A; until [ -f "$W/A/daemon.json" ]; do sleep 0.5; done
+wait_for "t A folders | python3 -c \"import json,sys; f=[x for x in json.load(sys.stdin) if x['id']=='$FID2'][0]; sys.exit(0 if f['paused'] and f.get('problem',{}).get('kind')=='overlap' else 1)\"" "重叠的文件夹被自动暂停并提示" 60
+t A folders | python3 -c "import json,sys; f=[x for x in json.load(sys.stdin) if x['id']=='$FID'][0]; sys.exit(0 if not f['paused'] and 'problem' not in f else 1)" && echo "✔ 先添加的「设计文档」不受影响" || { echo "✘ 先添加的「设计文档」不受影响"; exit 1; }
+t A activity | grep -q '位置重叠，已暂停同步' && echo "✔ 动态中有重叠提示" || { echo "✘ 动态中有重叠提示"; exit 1; }
+fails t A resume "$FID2" | grep -q '互相同步' && echo "✔ 重叠时不能直接恢复" || { echo "✘ 重叠时不能直接恢复"; exit 1; }
+fails t A relocate "$FID2" "$W/A-docs/嵌套2" | grep -q '之内' && echo "✔ 重新选择位置仍会检查" || { echo "✘ 重新选择位置仍会检查"; exit 1; }
+t A relocate "$FID2" "$W/A-临时新" | grep -q '"ok": true' && echo "✔ 重新选择独立位置" || { echo "✘ 重新选择独立位置"; exit 1; }
+wait_for "t A folders | python3 -c \"import json,sys; f=[x for x in json.load(sys.stdin) if x['id']=='$FID2'][0]; sys.exit(0 if not f['paused'] and 'problem' not in f else 1)\"" "换位置后自动恢复同步" 30
 echo "全部通过"

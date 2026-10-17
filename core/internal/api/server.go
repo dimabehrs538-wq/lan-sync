@@ -104,6 +104,7 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("POST /api/conflicts/resolve", s.resolveConflict)
 	m.HandleFunc("GET /api/events", s.events)
 	m.HandleFunc("GET /api/activity", s.listActivity)
+	m.HandleFunc("POST /api/path-check", s.pathCheck)
 	m.HandleFunc("DELETE /api/activity", s.clearActivity)
 	return s.cors(s.auth(m))
 }
@@ -254,6 +255,7 @@ func (s *Server) folders(w http.ResponseWriter, r *http.Request) {
 		names[d.DeviceID] = d.Name
 	}
 	conns, _ := s.C.Connections(ctx)
+	overlaps := s.overlaps(fs)
 	out := make([]folderView, 0, len(fs))
 	for _, f := range fs {
 		v := folderView{Folder: f, Members: []folderMember{}}
@@ -272,7 +274,11 @@ func (s *Server) folders(w http.ResponseWriter, r *http.Request) {
 			v.Status = &st
 			stErr = st.Error
 		}
-		v.Problem = team.Diagnose(f, stErr)
+		if o, bad := overlaps[f.ID]; bad {
+			v.Problem = &team.Problem{Kind: "overlap", Message: team.OverlapMessage(o), PathExists: true}
+		} else {
+			v.Problem = team.Diagnose(f, stErr)
+		}
 		if cs, err := conflict.Scan(f.Path); err == nil {
 			v.Conflicts = len(cs)
 		}
@@ -297,7 +303,14 @@ func (s *Server) createFolder(w http.ResponseWriter, r *http.Request) {
 	if in.Members != nil {
 		members = append([]string{}, (*in.Members)...)
 	}
+	if err := s.checkPath(r.Context(), in.Path, ""); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
 	f, err := s.Team.CreateFolder(r.Context(), in.Label, in.Path, members)
+	if err == nil && s.Store != nil {
+		s.Store.RecordAdded(f.ID, time.Now())
+	}
 	respond(w, f, err)
 }
 
@@ -327,7 +340,21 @@ func (s *Server) relocateFolder(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err)
 		return
 	}
-	respond(w, nil, s.Team.Relocate(r.Context(), r.PathValue("id"), in.Path))
+	id := r.PathValue("id")
+	if err := s.checkPath(r.Context(), in.Path, id); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	if err := s.Team.Relocate(r.Context(), id, in.Path); err != nil {
+		writeErr(w, 500, err)
+		return
+	}
+	// 因位置重叠被自动暂停的文件夹，换到安全位置后恢复同步
+	if s.Store.Get().OverlapPaused[id] {
+		_ = s.C.PatchFolder(r.Context(), id, map[string]any{"paused": false})
+		_ = s.Store.Update(func(st *team.Settings) { delete(st.OverlapPaused, id) })
+	}
+	respond(w, nil, nil)
 }
 
 func (s *Server) scan(w http.ResponseWriter, r *http.Request) {
@@ -336,7 +363,16 @@ func (s *Server) scan(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) pauseFolder(p bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		respond(w, nil, s.C.PatchFolder(r.Context(), r.PathValue("id"), map[string]any{"paused": p}))
+		id := r.PathValue("id")
+		if !p {
+			if fs, err := s.C.Folders(r.Context()); err == nil {
+				if o, bad := s.overlaps(fs)[id]; bad {
+					writeErr(w, 409, errors.New(team.OverlapMessage(o)))
+					return
+				}
+			}
+		}
+		respond(w, nil, s.C.PatchFolder(r.Context(), id, map[string]any{"paused": p}))
 	}
 }
 
@@ -523,6 +559,10 @@ func (s *Server) acceptInvitation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	if err := s.checkPath(ctx, in.Path, in.FolderID); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
 	my, err := s.Team.MyID(ctx)
 	if err != nil {
 		writeErr(w, 500, err)
@@ -546,6 +586,9 @@ func (s *Server) acceptInvitation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.Store.Unignore(in.FolderID)
+	// 重新接受（例如移除后再加入）算作新添加
+	_ = s.Store.Update(func(st *team.Settings) { delete(st.AddedAt, in.FolderID) })
+	s.Store.RecordAdded(in.FolderID, time.Now())
 	respond(w, f, nil)
 }
 
