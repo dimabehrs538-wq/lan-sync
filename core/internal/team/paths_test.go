@@ -73,7 +73,7 @@ func TestCheckSymlink(t *testing.T) {
 	if err := os.Symlink(real, link); err != nil {
 		t.Skip("不支持符号链接")
 	}
-	r := PathRules{Existing: []stclient.Folder{{ID: "a", Label: "A", Path: real}}}
+	r := PathRules{Win: isWindows, Existing: []stclient.Folder{{ID: "a", Label: "A", Path: real}}}
 	if err := r.Check(filepath.Join(link, "sub", "new"), ResolvePath); err == nil || !strings.Contains(err.Error(), "之内") {
 		t.Fatalf("通过符号链接嵌套应被识别: %v（real=%s link=%s）", err, ResolvePath(real), ResolvePath(filepath.Join(link, "sub", "new")))
 	}
