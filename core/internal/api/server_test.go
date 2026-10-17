@@ -79,3 +79,10 @@ func TestFriendlyError(t *testing.T) {
 		}
 	}
 }
+
+func TestFriendlyErrorMarker(t *testing.T) {
+	msg := FriendlyError(&stclient.APIError{Status: 500, Body: "folder marker missing (this indicates potential data loss, search docs/forum to get information about how to proceed)"})
+	if strings.Contains(msg, "missing") || !strings.Contains(msg, ".stfolder") {
+		t.Fatal(msg)
+	}
+}

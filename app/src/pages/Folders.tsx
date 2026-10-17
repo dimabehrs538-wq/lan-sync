@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { AlertTriangle, Check, FolderInput, FolderMinus, MoreHorizontal, Trash2, FolderOpen, FolderPlus, FolderSync, History, Mail, Pause, Play, RefreshCw, Send, UserCog, Users, X } from "lucide-react";
+import { AlertTriangle, Check, FolderInput, FolderMinus, MoreHorizontal, Trash2, FolderOpen, FolderPlus, FolderSync, History, Mail, Pause, Play, RefreshCw, Send, UserCog, Users, Wrench, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Avatar, Dot, Empty, PageHeader } from "@/components/common";
-import { api, formatBytes, isTauri, short, STATE_CN, type Device, type Folder, type FolderMember, type Invitation } from "@/lib/api";
+import { api, ApiError, formatBytes, isTauri, short, STATE_CN, type Device, type Folder, type FolderMember, type Invitation } from "@/lib/api";
 import { useData } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
@@ -203,6 +203,50 @@ function RemoveDialog({ folder, onClose }: { folder: Folder | null; onClose: () 
   );
 }
 
+/** 文件夹故障（.stfolder 丢失 / 路径丢失）提示与修复 */
+function ProblemBanner({ folder, onRemove }: { folder: Folder; onRemove: () => void }) {
+  const { run, refresh } = useData();
+  const p = folder.problem!;
+  const [confirmEmpty, setConfirmEmpty] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const repair = async (force: boolean) => {
+    setBusy(true);
+    try {
+      await api("POST", `/api/folders/${folder.id}/repair`, { force });
+      toast.success(`已修复「${folder.label || folder.id}」，正在重新扫描`);
+      setConfirmEmpty(false);
+      void refresh();
+    } catch (e) {
+      if (e instanceof ApiError && e.data.needConfirm) setConfirmEmpty(true);
+      else toast.error("修复失败", { description: (e as Error).message });
+    } finally { setBusy(false); }
+  };
+  const relocate = async () => {
+    const path = await pickDir();
+    if (path) await run(() => api("POST", `/api/folders/${folder.id}/relocate`, { path }), `已将「${folder.label || folder.id}」指向新位置`);
+  };
+  return (
+    <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-xs" data-testid="folder-problem">
+      <div className="flex gap-2 text-red-700 dark:text-red-400"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><span>{p.message}</span></div>
+      {p.kind === "markerMissing" && p.inGitRepo && (
+        <p className="mt-2 pl-6 text-muted-foreground">该文件夹位于 git 仓库内。建议在仓库的 <span className="font-mono">.gitignore</span> 中加入 <span className="font-mono">.stfolder/</span> 和 <span className="font-mono">.stversions/</span>，并避免执行 <span className="font-mono">git clean -x</span>（会删除被忽略的文件）。</p>
+      )}
+      {confirmEmpty && (
+        <p className="mt-2 pl-6 font-medium text-red-700 dark:text-red-400">文件夹是空的。如果文件确实丢失，修复后其他成员那里的文件也可能被删除。建议先确认文件是否被移走；确定这是全新的空文件夹再继续。</p>
+      )}
+      <div className="mt-2 flex flex-wrap gap-2 pl-6">
+        {p.kind === "markerMissing" && (confirmEmpty
+          ? <><Button size="sm" variant="destructive" disabled={busy} onClick={() => repair(true)}><Wrench />仍然修复</Button><Button size="sm" variant="outline" onClick={() => setConfirmEmpty(false)}>取消</Button></>
+          : <Button size="sm" disabled={busy} onClick={() => repair(false)}><Wrench />修复</Button>)}
+        {p.kind === "pathMissing" && <>
+          {isTauri() && <Button size="sm" onClick={relocate}><FolderOpen />重新选择位置</Button>}
+          <Button size="sm" variant="outline" onClick={onRemove}><FolderMinus />移除</Button>
+        </>}
+      </div>
+    </div>
+  );
+}
+
 const MEMBER_STATE: Record<FolderMember["remoteState"], [string, string]> = {
   valid: ["已加入", "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"],
   notSharing: ["未加入", "bg-amber-500/10 text-amber-700 dark:text-amber-400"],
@@ -270,7 +314,7 @@ export default function Folders() {
             const st = f.paused ? "paused" : f.status?.state ?? "";
             const g = f.status?.globalBytes || 0;
             const pct = g ? Math.round(((g - (f.status?.needBytes || 0)) / g) * 100) : 100;
-            const tone = st === "idle" ? "green" : st === "error" ? "red" : st === "paused" ? "gray" : "amber";
+            const tone = f.problem ? "red" : st === "idle" ? "green" : st === "error" ? "red" : st === "paused" ? "gray" : "amber";
             return (
               <Card key={f.id} className="py-4">
                 <CardContent className="px-5">
@@ -279,7 +323,7 @@ export default function Folders() {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="font-medium">{f.label || f.id}</span>
-                        <Badge variant="outline" className="gap-1.5"><Dot tone={tone} pulse={tone === "amber"} />{STATE_CN[st] ?? st}</Badge>
+                        <Badge variant="outline" className="gap-1.5"><Dot tone={tone} pulse={tone === "amber"} />{f.problem ? (f.problem.kind === "pathMissing" ? "路径丢失" : f.problem.kind === "markerMissing" ? "需要修复" : "出错") : STATE_CN[st] ?? st}</Badge>
                         {f.conflicts > 0 && <Badge className="bg-red-500 text-white">{f.conflicts} 个冲突</Badge>}
                       </div>
                       <div className="mt-0.5 truncate font-mono text-xs text-muted-foreground">{f.path}</div>
@@ -298,6 +342,7 @@ export default function Folders() {
                         {f.members.length === 0 && <span className="text-xs text-muted-foreground">仅本机，未共享给成员</span>}
                         {f.members.map((m) => <MemberChip key={m.deviceID} folder={f} m={m} />)}
                       </div>
+                      {f.problem && <ProblemBanner folder={f} onRemove={() => setRemoving(f)} />}
                     </div>
                     <div className="flex shrink-0 gap-1">
                       <Tooltip><TooltipTrigger asChild>

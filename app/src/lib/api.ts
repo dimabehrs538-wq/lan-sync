@@ -5,13 +5,15 @@ export interface Status {
   engine: string; myID?: string; uptime?: number; syncthingVersion?: string;
   connected?: number; folders?: number; syncing?: boolean; error?: string;
 }
-export interface FolderStatus { state: string; globalFiles: number; localFiles: number; needFiles: number; needBytes: number; globalBytes: number; errors: number }
+export interface FolderStatus { state: string; globalFiles: number; localFiles: number; needFiles: number; needBytes: number; globalBytes: number; errors: number; error?: string }
 export interface Folder {
   id: string; label: string; path: string; type: string; paused: boolean;
   devices: { deviceID: string }[]; fsWatcherEnabled: boolean;
   versioning: { type: string; params: Record<string, string> };
   status?: FolderStatus; conflicts: number; members: FolderMember[];
+  problem?: FolderProblem;
 }
+export interface FolderProblem { kind: "markerMissing" | "pathMissing" | "other"; message: string; pathExists: boolean; pathEmpty: boolean; inGitRepo: boolean }
 export interface FolderMember { deviceID: string; name: string; connected: boolean; remoteState: "valid" | "notSharing" | "paused" | "unknown"; completion: number }
 export interface Invitation { folderID: string; label: string; deviceID: string; deviceName: string; time: string; offerTime: string; suggestPath: string }
 export interface Settings { defaultBaseDir: string; ignoredCount: number }
@@ -21,6 +23,11 @@ export interface Conflict { path: string; original: string; time: string; device
 export interface UIEvent { type: string; message?: string; notify: boolean; time: string; data?: unknown }
 
 let core: CoreInfo | null = null;
+
+/** 带响应数据的错误（例如 repair 返回 needConfirm） */
+export class ApiError extends Error {
+  constructor(message: string, public status: number, public data: Record<string, unknown>) { super(message); }
+}
 
 const HTTP_CN: Record<number, string> = {
   400: "请求参数不正确", 401: "授权已失效，请重启软件", 404: "找不到对应的项目，可能已被移除", 500: "内核服务出错，请稍后重试", 502: "同步引擎暂时不可用", 503: "同步引擎暂时不可用",
@@ -51,7 +58,7 @@ export async function api<T = unknown>(method: string, path: string, body?: unkn
     throw new Error("无法连接内核服务，请稍后重试");
   }
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error((data as { error?: string }).error || HTTP_CN[r.status] || `请求失败（HTTP ${r.status}）`);
+  if (!r.ok) throw new ApiError((data as { error?: string }).error || HTTP_CN[r.status] || `请求失败（HTTP ${r.status}）`, r.status, data as Record<string, unknown>);
   return data as T;
 }
 

@@ -67,6 +67,17 @@ FID2=$("$T" add-folder 临时 "$W/A-tmp" "$IB" --home "$W/A" | sed -n 's/.*"id":
 t A share "$FID2" | grep -q '"ok": true' && echo "✔ 取消最后一位成员成功"
 t A folders | python3 -c "import json,sys; f=[x for x in json.load(sys.stdin) if x['id']=='$FID2'][0]; sys.exit(0 if f['members']==[] else 1)" && echo "✔ 文件夹变为仅本机"
 
+# ---- .stfolder 被删除（git clean 等）→ 卡片报错 → 修复 → 恢复同步 ----
+rm -rf "$W/A-docs/.stfolder"
+t A scan "$FID" >/dev/null 2>&1 || true
+wait_for "t A folders | python3 -c \"import json,sys; f=[x for x in json.load(sys.stdin) if x['id']=='$FID'][0]; sys.exit(0 if f.get('problem',{}).get('kind')=='markerMissing' and f['status']['state']=='error' else 1)\"" "删除 .stfolder 后引擎报错，卡片显示需要修复" 90
+t A scan "$FID" 2>&1 | grep -q "missing" && { echo "✘ 错误未翻译"; exit 1; } || echo "✔ 错误提示为中文"
+t A repair "$FID" | grep -q '"ok": true' && echo "✔ 修复成功"
+[ -d "$W/A-docs/.stfolder" ] && echo "✔ .stfolder 已重建"
+wait_for "t A folders | python3 -c \"import json,sys; f=[x for x in json.load(sys.stdin) if x['id']=='$FID'][0]; sys.exit(0 if 'problem' not in f and f['status']['state']!='error' else 1)\"" "修复后状态恢复正常" 60
+echo "修复后新增" > "$W/A-docs/修复后.md"
+wait_for "[ -f '$W/C-设计/修复后.md' ]" "修复后继续同步到 C" 60
+
 # ---- 移除（仅停止同步）----
 t B remove-folder "$FID" >/dev/null
 ! t B folders | grep -q "$FID" && echo "✔ B 已移除文件夹"

@@ -45,6 +45,8 @@ const usage = `teamsyncd - 内网团队文件夹同步内核
   teamsyncd accept <设备ID>            接受待确认设备
   teamsyncd conflicts                  列出冲突文件
   teamsyncd scan <文件夹ID>            立即扫描
+  teamsyncd repair <文件夹ID> [--force]  重建丢失的 .stfolder 标记并重新扫描（空目录需 --force）
+  teamsyncd relocate <文件夹ID> <新路径>  文件夹路径丢失时重新指定位置
 
 全局参数: --home DIR（默认 用户配置目录/TeamSync）
 `
@@ -337,6 +339,16 @@ func runCLI(cmd string, args []string, home string) error {
 			return err
 		}
 		return call("POST", "/api/folders/"+args[0]+"/scan", nil)
+	case "repair":
+		if err := need(1); err != nil {
+			return err
+		}
+		return call("POST", "/api/folders/"+args[0]+"/repair", map[string]bool{"force": len(args) > 1 && args[1] == "--force"})
+	case "relocate":
+		if err := need(2); err != nil {
+			return err
+		}
+		return call("POST", "/api/folders/"+args[0]+"/relocate", map[string]string{"path": args[1]})
 	}
 	return fmt.Errorf("未知命令 %q\n\n%s", cmd, usage)
 }

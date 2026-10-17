@@ -90,7 +90,7 @@ export default function Overview({ go }: { go: (p: Page) => void }) {
                 <div key={f.id}>
                   <div className="mb-1.5 flex items-center justify-between text-sm">
                     <span className="font-medium">{f.label || f.id}</span>
-                    <span className="flex items-center gap-1.5 text-xs text-muted-foreground"><Dot tone={st === "idle" ? "green" : st === "error" ? "red" : "amber"} />{STATE_CN[st] ?? st}</span>
+                    <span className="flex items-center gap-1.5 text-xs text-muted-foreground"><Dot tone={f.problem ? "red" : st === "idle" ? "green" : st === "error" ? "red" : "amber"} />{f.problem ? (f.problem.kind === "pathMissing" ? "路径丢失" : "需要修复") : STATE_CN[st] ?? st}</span>
                   </div>
                   <Progress value={pct} className={`h-1.5 ${pct === 100 ? "[&_[data-slot=progress-indicator]]:bg-emerald-500" : "[&_[data-slot=progress-indicator]]:bg-sky-500"}`} />
                   <div className="mt-1 text-[11px] text-muted-foreground">{f.status?.localFiles ?? 0} 个文件 · {f.members.filter((m) => m.remoteState === "valid").length}/{f.members.length} 位成员已加入</div>

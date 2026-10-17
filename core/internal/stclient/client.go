@@ -117,6 +117,7 @@ type Folder struct {
 	FSWatcherDelayS  float64        `json:"fsWatcherDelayS"`
 	Paused           bool           `json:"paused"`
 	Versioning       Versioning     `json:"versioning"`
+	MarkerName       string         `json:"markerName,omitempty"`
 }
 
 type Connection struct {
@@ -154,6 +155,7 @@ type FolderStatus struct {
 	NeedBytes   int64  `json:"needBytes"`
 	GlobalBytes int64  `json:"globalBytes"`
 	Errors      int    `json:"errors"`
+	Error       string `json:"error,omitempty"`
 }
 
 type Event struct {

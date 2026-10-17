@@ -69,6 +69,8 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("POST /api/pending/devices/{id}/accept", s.acceptDevice)
 	m.HandleFunc("DELETE /api/pending/devices/{id}", s.dismissDevice)
 	m.HandleFunc("PUT /api/folders/{id}/members", s.setMembers)
+	m.HandleFunc("POST /api/folders/{id}/repair", s.repairFolder)
+	m.HandleFunc("POST /api/folders/{id}/relocate", s.relocateFolder)
 	m.HandleFunc("DELETE /api/folders/{id}", s.removeFolder)
 	m.HandleFunc("POST /api/folders/{id}/reinvite", s.reinvite)
 	m.HandleFunc("GET /api/invitations", s.invitations)
@@ -130,6 +132,8 @@ func FriendlyError(err error) string {
 			return "找不到对应的文件夹或设备，可能已被移除"
 		case ae.Status == 403 || ae.Status == 401:
 			return "同步引擎拒绝访问，请重启软件"
+		case strings.Contains(strings.ToLower(body), "marker missing"), strings.Contains(strings.ToLower(body), "folder path missing"):
+			return team.TranslateEngineError(body)
 		case strings.Contains(body, "device ID"):
 			return "设备 ID 格式不正确，请检查后重试"
 		case strings.Contains(body, "path"):
@@ -209,6 +213,7 @@ type folderView struct {
 	Status    *stclient.FolderStatus `json:"status,omitempty"`
 	Conflicts int                    `json:"conflicts"`
 	Members   []folderMember         `json:"members"`
+	Problem   *team.Problem          `json:"problem,omitempty"`
 }
 
 func (s *Server) folders(w http.ResponseWriter, r *http.Request) {
@@ -238,9 +243,12 @@ func (s *Server) folders(w http.ResponseWriter, r *http.Request) {
 			}
 			v.Members = append(v.Members, m)
 		}
+		stErr := ""
 		if st, err := s.C.FolderStatus(r.Context(), f.ID); err == nil {
 			v.Status = &st
+			stErr = st.Error
 		}
+		v.Problem = team.Diagnose(f, stErr)
 		if cs, err := conflict.Scan(f.Path); err == nil {
 			v.Conflicts = len(cs)
 		}
@@ -267,6 +275,35 @@ func (s *Server) createFolder(w http.ResponseWriter, r *http.Request) {
 	}
 	f, err := s.Team.CreateFolder(r.Context(), in.Label, in.Path, members)
 	respond(w, f, err)
+}
+
+func (s *Server) repairFolder(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Force bool `json:"force"`
+	}
+	_ = decode(r, &in)
+	err := s.Team.Repair(r.Context(), r.PathValue("id"), in.Force)
+	switch {
+	case errors.Is(err, team.ErrNeedConfirm):
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(409)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error(), "needConfirm": true})
+	case errors.Is(err, team.ErrPathMissing):
+		writeErr(w, 409, err)
+	default:
+		respond(w, nil, err)
+	}
+}
+
+func (s *Server) relocateFolder(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Path string `json:"path"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	respond(w, nil, s.Team.Relocate(r.Context(), r.PathValue("id"), in.Path))
 }
 
 func (s *Server) scan(w http.ResponseWriter, r *http.Request) {
