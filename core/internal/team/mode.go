@@ -62,6 +62,7 @@ func ReadMode(dir string) (ShareMode, bool) {
 func WriteMode(dir string, m ShareMode) error {
 	b, _ := json.MarshalIndent(m, "", "  ")
 	p := filepath.Join(dir, ModeFile)
+	unhideMarker(p) // 切换模式时覆盖已隐藏的旧文件
 	if err := os.WriteFile(p, b, 0o644); err != nil {
 		return err
 	}

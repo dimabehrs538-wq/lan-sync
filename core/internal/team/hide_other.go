@@ -2,4 +2,5 @@
 
 package team
 
-func hideMarker(string) {}
+func hideMarker(string)   {}
+func unhideMarker(string) {}

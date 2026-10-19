@@ -39,7 +39,15 @@ func TestModeFileAndFolderMode(t *testing.T) {
 	if !ok || m.Mode != ModeReadOnly || m.Owner != "OWNER" {
 		t.Fatalf("%+v", m)
 	}
-	os.WriteFile(filepath.Join(d, ModeFile), []byte(`{"mode":"weird"}`), 0o644)
+	if err := WriteMode(d, ShareMode{Mode: ModeCollab, Owner: "OWNER"}); err != nil {
+		t.Fatal("覆盖模式文件:", err)
+	}
+	if m, ok := ReadMode(d); !ok || m.Mode != ModeCollab {
+		t.Fatalf("覆盖后应为协作: %+v", m)
+	}
+	if err := WriteMode(d, ShareMode{Mode: "weird"}); err != nil {
+		t.Fatal(err)
+	}
 	if _, ok := ReadMode(d); ok {
 		t.Fatal("未知模式应忽略")
 	}
