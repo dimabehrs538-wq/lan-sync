@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -44,6 +45,9 @@ const usage = `teamsyncd - 内网团队文件夹同步内核
   teamsyncd override <文件夹ID>                    只读共享者：以本机版本为准覆盖成员
   teamsyncd versions <文件夹ID>                    查看历史版本
   teamsyncd restore <文件夹ID> <相对路径> [版本时间] 恢复历史版本（默认最近一个）
+  teamsyncd retention-default <份数> <天数> <容量MB>  修改历史版本默认保留规则（默认 10 份 / 30 天 / 2048 MB）
+  teamsyncd retention <文件夹ID> default|<份数> <天数> <容量MB>  文件夹单独的保留规则（default=使用默认值）
+  teamsyncd cleanup-versions <文件夹ID>             立即按保留规则清理历史版本
   teamsyncd pause|resume <文件夹ID>                暂停/恢复文件夹同步
   teamsyncd check-path <路径> [文件夹ID]               检查位置是否可用（不能与已有文件夹相同/嵌套）
   teamsyncd activity                              查看最近动态（最多 500 条 / 7 天）
@@ -381,6 +385,36 @@ func runCLI(cmd string, args []string, home string) error {
 		return call("POST", "/api/path-check", body)
 	case "activity":
 		return call("GET", "/api/activity", nil)
+	case "retention-default":
+		if err := need(3); err != nil {
+			return err
+		}
+		r, err := parseRetention(args)
+		if err != nil {
+			return err
+		}
+		return call("PUT", "/api/settings", map[string]any{"retention": r})
+	case "retention":
+		if err := need(2); err != nil {
+			return err
+		}
+		if args[1] == "default" {
+			return call("PUT", "/api/folders/"+args[0]+"/retention", map[string]any{"custom": false})
+		}
+		if err := need(4); err != nil {
+			return err
+		}
+		r, err := parseRetention(args[1:])
+		if err != nil {
+			return err
+		}
+		r["custom"] = true
+		return call("PUT", "/api/folders/"+args[0]+"/retention", r)
+	case "cleanup-versions":
+		if err := need(1); err != nil {
+			return err
+		}
+		return call("POST", "/api/folders/"+args[0]+"/versions/cleanup", nil)
 	case "presence-notify":
 		if err := need(1); err != nil {
 			return err
@@ -478,4 +512,17 @@ func findInvite(info daemonInfo, folderID, deviceID string) (team.Invitation, er
 		}
 	}
 	return team.Invitation{}, fmt.Errorf("没有找到文件夹 %s 的邀请", folderID)
+}
+
+// parseRetention 解析 <份数> <天数> <容量MB>。
+func parseRetention(a []string) (map[string]any, error) {
+	var n [3]int64
+	for i := range n {
+		v, err := strconv.ParseInt(a[i], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("不是数字：%s", a[i])
+		}
+		n[i] = v
+	}
+	return map[string]any{"keep": n[0], "days": n[1], "maxMB": n[2]}, nil
 }

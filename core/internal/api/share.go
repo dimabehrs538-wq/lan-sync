@@ -36,7 +36,8 @@ func (s *Server) setDeleteProtection(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err)
 		return
 	}
-	respond(w, nil, s.Team.SetDeleteProtection(r.Context(), r.PathValue("id"), in.Enabled))
+	ret, _ := s.retentionFor(r.PathValue("id"))
+	respond(w, nil, s.Team.SetDeleteProtection(r.Context(), r.PathValue("id"), in.Enabled, ret))
 }
 
 func (s *Server) revert(w http.ResponseWriter, r *http.Request) {

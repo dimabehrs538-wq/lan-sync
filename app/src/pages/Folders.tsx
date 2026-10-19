@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { AlertTriangle, Check, Eye, Info, Lock, ShieldCheck, Settings2, Undo2, Upload, FolderInput, FolderMinus, MoreHorizontal, Trash2, FolderOpen, FolderPlus, FolderSync, History, Mail, Pause, Play, RefreshCw, Send, UserCog, Users, Wrench, X } from "lucide-react";
+import { AlertTriangle, Check, Eye, Info, Lock, ShieldCheck, Settings2, Undo2, Upload, FolderInput, FolderMinus, MoreHorizontal, SlidersHorizontal, Trash2, FolderOpen, FolderPlus, FolderSync, History, Mail, Pause, Play, RefreshCw, Send, UserCog, Users, Wrench, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,8 +13,9 @@ import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Switch } from "@/components/ui/switch";
 import { VersionsDialog } from "@/components/VersionsDialog";
+import { formatCap, RetentionDialog, retentionText } from "@/components/Retention";
 import { Avatar, Dot, Empty, PageHeader } from "@/components/common";
-import { api, ApiError, formatBytes, isTauri, short, STATE_CN, type Device, type Folder, type FolderMember, type Invitation, type PathInfo } from "@/lib/api";
+import { api, ApiError, formatBytes, isTauri, short, STATE_CN, type Device, type Folder, type FolderMember, type Invitation, type PathInfo, type Retention } from "@/lib/api";
 import { useData } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
@@ -93,11 +94,13 @@ function ModePicker({ value, onChange, disabled }: { value: Mode; onChange: (m: 
   );
 }
 
-function ProtectRow({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+function ProtectRow({ checked, onChange, retention }: { checked: boolean; onChange: (v: boolean) => void; retention?: Retention }) {
+  const { settings } = useData();
+  const r = retention ?? settings?.retention;
   return (
     <div className="flex items-center gap-3 rounded-lg border p-3">
       <ShieldCheck className="size-4 text-emerald-600" />
-      <div className="flex-1"><div className="text-sm font-medium">删除保护</div><div className="text-xs text-muted-foreground">文件被成员删除或覆盖时，在本机保留旧版本（每个文件 10 份、30 天），可一键恢复</div></div>
+      <div className="flex-1"><div className="text-sm font-medium">删除保护</div><div className="text-xs text-muted-foreground">文件被成员删除或覆盖时，在本机保留旧版本（{retentionText(r)} · 上限 {formatCap(r?.maxMB ?? 2048)}），可一键恢复</div></div>
       <Switch checked={checked} onCheckedChange={onChange} />
     </div>
   );
@@ -125,7 +128,7 @@ function FolderSettingsDialog({ folder, onClose }: { folder: Folder | null; onCl
           <DialogDescription>{member ? "这是同事共享给你的只读文件夹，共享模式由共享者决定。" : "切换共享模式后，已加入的成员会自动跟随，无需重新邀请。"}</DialogDescription>
         </DialogHeader>
         <div className="space-y-2"><Label>共享模式</Label><ModePicker value={mode} onChange={setMode} disabled={member} /></div>
-        <ProtectRow checked={protect} onChange={setProtect} />
+        <ProtectRow checked={protect} onChange={setProtect} retention={folder?.retention} />
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>取消</Button>
           <Button onClick={save} disabled={!folder || (mode === folder.mode && protect === folder.deleteProtection)}><Check />保存</Button>
@@ -423,6 +426,7 @@ export default function Folders() {
   const [removing, setRemoving] = useState<Folder | null>(null);
   const [settingsOf, setSettings] = useState<Folder | null>(null);
   const [versionsOf, setVersions] = useState<Folder | null>(null);
+  const [retentionOf, setRetentionOf] = useState<Folder | null>(null);
 
   return (
     <>
@@ -488,7 +492,7 @@ export default function Folders() {
                         <span>{f.status?.localFiles ?? 0} 个文件 · {formatBytes(f.status?.globalBytes)}</span>
                         {f.status?.needFiles ? <span className="text-amber-600">还差 {f.status.needFiles} 个文件</span> : null}
                         {f.versioning?.type
-                          ? <button className="flex items-center gap-1 hover:text-foreground hover:underline" onClick={() => setVersions(f)}><History className="size-3" />历史版本 保留 {f.versioning.params?.keep ?? "-"} 份</button>
+                          ? <button className="flex items-center gap-1 hover:text-foreground hover:underline" onClick={() => setVersions(f)}><History className="size-3" />历史版本 {retentionText(f.retention)}{f.versionsSize ? ` · 占用 ${formatBytes(f.versionsSize)}` : ""}</button>
                           : <span className="flex items-center gap-1 text-amber-600"><ShieldCheck className="size-3" />未开启删除保护</span>}
                         {f.fsWatcherEnabled && <span>实时监视</span>}
                       </div>
@@ -518,6 +522,7 @@ export default function Folders() {
                           <DropdownMenuItem onClick={() => setEditing(f)}><UserCog />管理成员</DropdownMenuItem>
                           <DropdownMenuItem onClick={() => setSettings(f)}><Settings2 />共享设置</DropdownMenuItem>
                           <DropdownMenuItem onClick={() => setVersions(f)}><History />历史版本</DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => setRetentionOf(f)}><SlidersHorizontal />历史版本设置</DropdownMenuItem>
                           <DropdownMenuItem onClick={() => run(() => api("POST", `/api/folders/${f.id}/scan`), "已开始扫描")}><RefreshCw />立即扫描</DropdownMenuItem>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem variant="destructive" onClick={() => setRemoving(f)}><FolderMinus />移除…</DropdownMenuItem>
@@ -537,6 +542,7 @@ export default function Folders() {
       <RemoveDialog folder={removing} onClose={() => setRemoving(null)} />
       <FolderSettingsDialog folder={settingsOf} onClose={() => setSettings(null)} />
       <VersionsDialog folder={versionsOf} onClose={() => setVersions(null)} />
+      <RetentionDialog folder={retentionOf} onClose={() => setRetentionOf(null)} />
     </>
   );
 }

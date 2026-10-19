@@ -234,4 +234,31 @@ ok "[ \"\$(cat '$W/C-base/周报/第1周.md')\" = '第 1 周内容' ]" "C 文件
 ok "fails t C restore $F3 不存在.md | grep -q '没有找到'" "不存在的文件提示中文错误"
 t C delete-protection "$F3" off >/dev/null
 ok "fj C $F3 \"not f['deleteProtection']\"" "可关闭删除保护"
+# ---- v0.3.0：历史版本保留规则（份数 / 天数 / 总容量） ----
+vp(){ fj "$1" "$2" "f['versioning']['params']['keep']=='$3' and f['versioning']['params']['cleanoutDays']=='$4'"; }
+t C settings | python3 -c "import json,sys; r=json.load(sys.stdin)['retention']; assert r=={'keep':10,'days':30,'maxMB':2048}, r; print('✔ 默认保留规则 10 份 / 30 天 / 2 GB')"
+t C delete-protection "$F3" on >/dev/null
+ok "fj C $F3 \"f['deleteProtection'] and f['retention']=={'keep':10,'days':30,'maxMB':2048,'custom':False}\" && vp C $F3 10 30" "重新开启删除保护，使用默认规则"
+ok "fails t C retention-default 0 7 10 | grep -q '保留份数需在 1–100'" "份数超出范围被拒绝"
+ok "fails t C retention-default 10 400 10 | grep -q '保留天数需在 1–365'" "天数超出范围被拒绝"
+t C retention-default 5 7 1024 >/dev/null
+ok "vp C $F3 5 7 && vp C $F6 5 7 && fj C $F3 \"f['retention']['days']==7 and f['retention']['maxMB']==1024\"" "修改默认值后，使用默认值的文件夹立即生效（引擎参数 keep/cleanoutDays）"
+t C retention "$F3" 2 3 1 >/dev/null
+ok "vp C $F3 2 3 && fj C $F3 \"f['retention']=={'keep':2,'days':3,'maxMB':1,'custom':True}\" && vp C $F6 5 7" "文件夹单独设置只影响该文件夹"
+t C retention-default 8 9 2048 >/dev/null
+ok "vp C $F3 2 3 && vp C $F6 8 9" "再改默认值：自定义的文件夹不受影响"
+for v in 甲 乙 丙 丁; do sleep 1.2; echo "第 1 周 $v" > "$W/A-周报/第1周.md"; t A scan "$F3" >/dev/null; wait_for "grep -q $v '$W/C-base/周报/第1周.md'" "C 收到修改 $v" 60; done
+ok "t C versions $F3 | python3 -c \"import json,sys; v=[x for x in json.load(sys.stdin) if x['path']=='第1周.md'][0]; sys.exit(0 if len(v['versions'])<=2 else 1)\"" "每个文件最多保留 2 份"
+head -c 1600000 /dev/urandom > "$W/A-周报/大文件.bin"; t A scan "$F3" >/dev/null
+wait_for "[ \"\$(stat -c %s '$W/C-base/周报/大文件.bin' 2>/dev/null)\" = 1600000 ]" "C 收到 1.6 MB 大文件" 60
+head -c 1600000 /dev/urandom > "$W/A-周报/大文件.bin"; t A scan "$F3" >/dev/null
+wait_for "cmp -s '$W/A-周报/大文件.bin' '$W/C-base/周报/大文件.bin'" "C 收到大文件的新内容" 60
+wait_for "! ls '$W/C-base/周报/.stversions/' | grep -q '大文件~' && fj C $F3 \"f['versionsSize']<=1048576\"" "超过 1 MB 总容量后，内核自动删除最旧的版本" 30
+OLDV="$W/C-base/周报/.stversions/过期~$(date -d '-10 days' +%Y%m%d-%H%M%S).md"; echo 旧 > "$OLDV"
+t C cleanup-versions "$F3" | python3 -c "import json,sys; r=json.load(sys.stdin); assert r['removed']>=1 and r['size']<=1048576, r; print('✔ 立即清理删除超过 3 天的版本，返回清理结果')"
+ok "[ ! -e '$OLDV' ]" "过期版本文件已删除"
+sleep 1.2; echo "第 1 周 戊" > "$W/A-周报/第1周.md"; t A scan "$F3" >/dev/null
+wait_for "fj C $F3 \"f['versionsFiles']>=1 and 0<f['versionsSize']<=1048576\"" "卡片显示当前历史版本占用（份数与大小）" 60
+t C retention "$F3" default >/dev/null
+ok "vp C $F3 8 9 && fj C $F3 \"not f['retention']['custom']\"" "改回使用默认值"
 echo "全部通过"

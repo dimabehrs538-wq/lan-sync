@@ -105,6 +105,7 @@ func (s *Server) GuardOverlaps(ctx context.Context) {
 func (s *Server) RunOverlapGuard(ctx context.Context, every time.Duration) {
 	s.GuardOverlaps(ctx)
 	s.SyncModes(ctx)
+	s.GuardRetention(ctx, false)
 	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
@@ -114,6 +115,7 @@ func (s *Server) RunOverlapGuard(ctx context.Context, every time.Duration) {
 		case <-t.C:
 			s.GuardOverlaps(ctx)
 			s.SyncModes(ctx)
+			s.GuardRetention(ctx, false)
 		}
 	}
 }

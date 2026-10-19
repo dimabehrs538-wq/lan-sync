@@ -45,8 +45,9 @@ type Server struct {
 	Activity    *activity.Log
 	Presence    *Presence
 
-	mu   sync.Mutex
-	subs map[chan UIEvent]struct{}
+	mu    sync.Mutex
+	subs  map[chan UIEvent]struct{}
+	prune pruneState
 }
 
 func New(c *stclient.Client, token string, state func() string, store *team.Store) *Server {
@@ -111,6 +112,8 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("POST /api/folders/{id}/override", s.override)
 	m.HandleFunc("GET /api/folders/{id}/versions", s.listVersions)
 	m.HandleFunc("POST /api/folders/{id}/versions/restore", s.restoreVersion)
+	m.HandleFunc("POST /api/folders/{id}/versions/cleanup", s.cleanupVersions)
+	m.HandleFunc("PUT /api/folders/{id}/retention", s.setFolderRetention)
 	m.HandleFunc("DELETE /api/activity", s.clearActivity)
 	return s.cors(s.auth(m))
 }
@@ -249,6 +252,10 @@ type folderView struct {
 	Mode             string `json:"mode"`
 	Role             string `json:"role,omitempty"`
 	DeleteProtection bool   `json:"deleteProtection"`
+	// Retention 实际使用的历史版本保留规则；VersionsSize/VersionsFiles 为 .stversions 当前占用
+	Retention     retentionView `json:"retention"`
+	VersionsSize  int64         `json:"versionsSize"`
+	VersionsFiles int           `json:"versionsFiles"`
 }
 
 func (s *Server) folders(w http.ResponseWriter, r *http.Request) {
@@ -271,6 +278,8 @@ func (s *Server) folders(w http.ResponseWriter, r *http.Request) {
 		v := folderView{Folder: f, Members: []folderMember{}, DeleteProtection: f.Versioning.Type != ""}
 		v.Mode, v.Role = team.FolderMode(f, my)
 		v.Folder.Label, _ = team.ParseLabel(f.Label)
+		v.Retention.Retention, v.Retention.Custom = s.retentionFor(f.ID)
+		v.VersionsSize, v.VersionsFiles = s.versionsSize(f)
 		for _, d := range f.Devices {
 			if d.DeviceID == my {
 				continue
@@ -326,12 +335,16 @@ func (s *Server) createFolder(w http.ResponseWriter, r *http.Request) {
 	if err == nil && s.Store != nil {
 		s.Store.RecordAdded(f.ID, time.Now())
 	}
+	if err == nil {
+		ret, _ := s.retentionFor(f.ID)
+		_, err = s.Team.ApplyRetention(r.Context(), f, ret)
+	}
 	if err == nil && in.Mode == team.ModeReadOnly {
 		err = s.Team.SetMode(r.Context(), f.ID, team.ModeReadOnly)
 		f.Type = "sendonly"
 	}
 	if err == nil && in.DeleteProtection != nil && !*in.DeleteProtection {
-		err = s.Team.SetDeleteProtection(r.Context(), f.ID, false)
+		err = s.Team.SetDeleteProtection(r.Context(), f.ID, false, team.Retention{})
 		f.Versioning = stclient.Versioning{}
 	}
 	respond(w, f, err)
@@ -523,6 +536,9 @@ func (s *Server) removeFolder(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err)
 		return
 	}
+	if s.Store != nil {
+		_ = s.Store.SetFolderRetention(r.PathValue("id"), nil)
+	}
 	writeJSON(w, res)
 }
 
@@ -613,6 +629,9 @@ func (s *Server) acceptInvitation(w http.ResponseWriter, r *http.Request) {
 	if ro {
 		f.Type = "receiveonly" // 只读共享：本机改动不会同步出去
 	}
+	if ret, _ := s.retentionFor(f.ID); f.Versioning.Type == "simple" {
+		f.Versioning = team.VersioningFor(ret)
+	}
 	if err := s.C.PutFolder(ctx, f); err != nil {
 		writeErr(w, 500, err)
 		return
@@ -639,7 +658,7 @@ func (s *Server) ignoreInvitation(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 	st := s.Store.Get()
-	writeJSON(w, map[string]any{"defaultBaseDir": st.DefaultBaseDir, "ignoredCount": len(st.Ignored), "presenceNotify": st.PresenceNotify})
+	writeJSON(w, map[string]any{"defaultBaseDir": st.DefaultBaseDir, "ignoredCount": len(st.Ignored), "presenceNotify": st.PresenceNotify, "retention": s.Store.DefaultRetention()})
 }
 
 func (s *Server) listActivity(w http.ResponseWriter, r *http.Request) {
@@ -652,12 +671,24 @@ func (s *Server) clearActivity(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		DefaultBaseDir string `json:"defaultBaseDir"`
-		PresenceNotify *bool  `json:"presenceNotify"`
+		DefaultBaseDir string          `json:"defaultBaseDir"`
+		PresenceNotify *bool           `json:"presenceNotify"`
+		Retention      *team.Retention `json:"retention"`
 	}
-	if err := decode(r, &in); err != nil || (in.DefaultBaseDir == "" && in.PresenceNotify == nil) {
+	if err := decode(r, &in); err != nil || (in.DefaultBaseDir == "" && in.PresenceNotify == nil && in.Retention == nil) {
 		writeErr(w, 400, fmt.Errorf("默认目录不能为空"))
 		return
+	}
+	if in.Retention != nil {
+		if err := s.Store.SetDefaultRetention(*in.Retention); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		s.GuardRetention(r.Context(), true) // 使用默认值的文件夹立即生效
+		if in.DefaultBaseDir == "" && in.PresenceNotify == nil {
+			respond(w, nil, nil)
+			return
+		}
 	}
 	if in.PresenceNotify != nil {
 		if err := s.Store.Update(func(st *team.Settings) { st.PresenceNotify = *in.PresenceNotify }); err != nil {
@@ -774,11 +805,15 @@ func (s *Server) RunEventBridge(ctx context.Context) {
 		}
 		if e.Type == "ItemFinished" || e.Type == "RemoteChangeDetected" {
 			var d struct {
-				Item string `json:"item"`
-				Path string `json:"path"`
+				Item   string `json:"item"`
+				Path   string `json:"path"`
+				Folder string `json:"folder"`
 			}
 			if json.Unmarshal(e.Data, &d) == nil && (d.Item == team.ModeFile || d.Path == team.ModeFile) {
 				s.syncModesSoon(ctx)
+			}
+			if e.Type == "ItemFinished" && d.Folder != "" {
+				s.markVersionsDirty(d.Folder) // 远程修改/删除可能产生了新的历史版本
 			}
 			if e.Type == "ItemFinished" {
 				return

@@ -159,15 +159,15 @@ func (s *Service) SyncModes(ctx context.Context) ([]ModeChange, error) {
 	return out, nil
 }
 
-// SetDeleteProtection 开关删除保护（简单版本控制：保留 10 份 / 30 天，被删除或覆盖的文件进入 .stversions）。
-func (s *Service) SetDeleteProtection(ctx context.Context, id string, on bool) error {
+// SetDeleteProtection 开关删除保护（简单版本控制，按保留规则；被删除或覆盖的文件进入 .stversions）。
+func (s *Service) SetDeleteProtection(ctx context.Context, id string, on bool, r Retention) error {
 	v := stclient.Versioning{Type: "", Params: map[string]string{}}
 	if on {
-		v = DefaultVersioning()
+		v = VersioningFor(r)
 	}
 	return s.C.PatchFolder(ctx, id, map[string]any{"versioning": v})
 }
 
 func DefaultVersioning() stclient.Versioning {
-	return stclient.Versioning{Type: "simple", Params: map[string]string{"keep": "10", "cleanoutDays": "30"}, CleanupIntervalS: 3600}
+	return VersioningFor(DefaultRetention)
 }

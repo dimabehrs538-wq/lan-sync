@@ -10,6 +10,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { api, formatBytes, isTauri, type Folder, type VersionedFile } from "@/lib/api";
 import { useData } from "@/lib/store";
+import { formatCap, VersionsUsage } from "@/components/Retention";
 import { cn } from "@/lib/utils";
 
 const fmt = (t: string) => new Date(t).toLocaleString("zh-CN", { hour12: false });
@@ -25,7 +26,8 @@ async function reveal(p: string) {
 
 /** 历史版本：列出文件夹中有历史版本的文件（含已删除的），可恢复、打开或在文件夹中显示。 */
 export function VersionsDialog({ folder, onClose }: { folder: Folder | null; onClose: () => void }) {
-  const { refresh } = useData();
+  const { refresh, folders } = useData();
+  const live = folders.find((f) => f.id === folder?.id) ?? folder;
   const [list, setList] = useState<VersionedFile[] | null>(null);
   const [q, setQ] = useState("");
   const [tab, setTab] = useState<"all" | "deleted">("all");
@@ -53,7 +55,7 @@ export function VersionsDialog({ folder, onClose }: { folder: Folder | null; onC
       <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><History className="size-4" />「{folder?.label}」的历史版本</DialogTitle>
-          <DialogDescription>被修改或删除的文件会保留旧版本（每个文件最多 {folder?.versioning?.params?.keep ?? 10} 份，保留 {folder?.versioning?.params?.cleanoutDays ?? 30} 天），只保存在本机。恢复时当前文件会先存为一个新版本。</DialogDescription>
+          <DialogDescription>被修改或删除的文件会保留旧版本（每个文件最多 {folder?.retention?.keep ?? 10} 份，保留 {folder?.retention?.days ?? 30} 天，总共不超过 {formatCap(folder?.retention?.maxMB ?? 2048)}），只保存在本机。恢复时当前文件会先存为一个新版本。</DialogDescription>
         </DialogHeader>
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
@@ -118,6 +120,7 @@ export function VersionsDialog({ folder, onClose }: { folder: Folder | null; onC
             </ul>
           )}
         </ScrollArea>
+        {live && <VersionsUsage folder={live} compact onCleaned={() => void load(live)} />}
       </DialogContent>
     </Dialog>
   );

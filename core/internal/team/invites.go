@@ -27,6 +27,10 @@ type Settings struct {
 	OverlapPaused map[string]bool `json:"overlapPaused,omitempty"`
 	// AddedAt 记录文件夹在本机添加（新建/接受邀请）的时间，用于判断重叠时哪个是后添加的
 	AddedAt map[string]time.Time `json:"addedAt,omitempty"`
+	// Retention 历史版本的全局默认保留规则（nil = 10 份 / 30 天 / 2 GB）
+	Retention *Retention `json:"retention,omitempty"`
+	// FolderRetention 单独设置了保留规则的文件夹
+	FolderRetention map[string]Retention `json:"folderRetention,omitempty"`
 }
 
 // IgnoredInvite 记录被忽略（或本机已移除）的文件夹邀请（文件夹 + 邀请人）。

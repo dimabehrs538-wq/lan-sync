@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowUpCircle, Bell, FolderOpen, Wifi, Info, Laptop, Moon, Power, Save, ShieldCheck, Sun } from "lucide-react";
+import { ArrowUpCircle, Bell, FolderOpen, History, Wifi, Info, Laptop, Moon, Power, Save, ShieldCheck, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { PageHeader } from "@/components/common";
-import { api, formatUptime, isTauri } from "@/lib/api";
+import { api, DEFAULT_RETENTION, formatUptime, isTauri, type Retention } from "@/lib/api";
+import { RetentionFields, validateRetention } from "@/components/Retention";
 import { useData } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { useUpdater } from "@/lib/updater";
@@ -25,10 +26,17 @@ function Row({ icon: Icon, title, desc, children }: { icon: typeof Bell; title: 
 
 export default function Settings() {
   const { theme, setTheme } = useTheme();
-  const { status, settings, run } = useData();
+  const { status, settings, folders, run } = useData();
   const up = useUpdater();
   const [base, setBase] = useState("");
   useEffect(() => { if (settings) setBase(settings.defaultBaseDir); }, [settings?.defaultBaseDir]);
+  const [ret, setRet] = useState<Retention>(DEFAULT_RETENTION);
+  const [retKey, setRetKey] = useState(0);
+  const sr = settings?.retention;
+  useEffect(() => { if (sr) { setRet(sr); setRetKey((k) => k + 1); } }, [sr?.keep, sr?.days, sr?.maxMB]);
+  const retErr = validateRetention(ret);
+  const retSame = !!sr && sr.keep === ret.keep && sr.days === ret.days && sr.maxMB === ret.maxMB;
+  const customCount = folders.filter((f) => f.retention?.custom).length;
   const [auto, setAuto] = useState(false);
   const [notify, setNotify] = useState(localStorage.getItem("notify") !== "0");
   useEffect(() => {
@@ -62,6 +70,20 @@ export default function Settings() {
             if (typeof p === "string") setBase(p);
           }}><FolderOpen />浏览</Button>}
           <Button disabled={!base || base === settings?.defaultBaseDir} onClick={() => run(() => api("PUT", "/api/settings", { defaultBaseDir: base }), "已保存默认位置")}><Save />保存</Button>
+        </CardContent>
+      </Card>
+      <Card className="mt-4" data-testid="retention-settings">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-sm"><History className="size-4" />历史版本默认保留规则</CardTitle>
+          <CardDescription>开启删除保护的文件夹在本机保留被删除或覆盖的旧版本。修改后，使用默认设置的文件夹立即生效{customCount ? `（${customCount} 个文件夹使用自定义设置，不受影响）` : ""}；单个文件夹可在卡片“…”菜单 →“历史版本设置”中自定义。</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <RetentionFields key={retKey} value={ret} onChange={setRet} />
+          <div className="flex items-center gap-3">
+            <p className={retErr ? "flex-1 text-xs text-destructive" : "flex-1 text-xs text-muted-foreground"}>{retErr ?? "超过份数、天数或总容量上限时，内核会定期从最旧的版本开始删除。"}</p>
+            {!retSame && sr && <Button variant="ghost" size="sm" onClick={() => { setRet(sr); setRetKey((k) => k + 1); }}>还原</Button>}
+            <Button disabled={!!retErr || retSame} onClick={() => run(() => api("PUT", "/api/settings", { retention: ret }), "已保存默认保留规则")}><Save />保存</Button>
+          </div>
         </CardContent>
       </Card>
       <Card className="mt-4">

@@ -14,12 +14,17 @@ export interface Folder {
   problem?: FolderProblem;
   /** 共享模式：collab 协作 / readonly 只读共享；role：只读时本机为共享者 owner 或成员 member */
   mode: "collab" | "readonly"; role?: "owner" | "member"; deleteProtection: boolean;
+  /** 实际使用的历史版本保留规则（custom=单独设置）；versionsSize/versionsFiles 为当前历史版本占用 */
+  retention?: Retention & { custom: boolean }; versionsSize?: number; versionsFiles?: number;
 }
+export interface Retention { keep: number; days: number; maxMB: number }
+export interface PruneResult { removed: number; freed: number; size: number; files: number }
+export const DEFAULT_RETENTION: Retention = { keep: 10, days: 30, maxMB: 2048 };
 export interface PathInfo { ok: boolean; error?: string; exists: boolean; empty: boolean; entries: number }
 export interface FolderProblem { kind: "markerMissing" | "pathMissing" | "overlap" | "other"; message: string; pathExists: boolean; pathEmpty: boolean; inGitRepo: boolean }
 export interface FolderMember { deviceID: string; name: string; connected: boolean; remoteState: "valid" | "notSharing" | "paused" | "unknown"; completion: number }
 export interface Invitation { folderID: string; label: string; deviceID: string; deviceName: string; time: string; offerTime: string; suggestPath: string; mode?: "collab" | "readonly" }
-export interface Settings { defaultBaseDir: string; ignoredCount: number; presenceNotify?: boolean }
+export interface Settings { defaultBaseDir: string; ignoredCount: number; presenceNotify?: boolean; retention?: Retention }
 export interface Device { deviceID: string; name: string; connected: boolean; address?: string; self: boolean; paused: boolean; remark?: boolean; announcedName?: string }
 export interface Nearby { deviceID: string; addresses: string[]; name?: string; pending: boolean }
 export interface Conflict { path: string; original: string; time: string; device: string; folderID: string; folderLabel: string }
