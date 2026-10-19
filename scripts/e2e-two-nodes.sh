@@ -261,4 +261,34 @@ sleep 1.2; echo "第 1 周 戊" > "$W/A-周报/第1周.md"; t A scan "$F3" >/dev
 wait_for "fj C $F3 \"f['versionsFiles']>=1 and 0<f['versionsSize']<=1048576\"" "卡片显示当前历史版本占用（份数与大小）" 60
 t C retention "$F3" default >/dev/null
 ok "vp C $F3 8 9 && fj C $F3 \"not f['retention']['custom']\"" "改回使用默认值"
+# ---- v0.3.1：共享者记录在本机，成员不能夺取，伪造的模式文件被忽略 ----
+ok "fj A $F6 \"f['owner']=='$IA' and f['role']=='owner' and f['ownerName']=='我'\" && fj C $F6 \"f['owner']=='$IA' and f['role']=='member' and f['ownerName']=='张经理'\"" "共享者记录：A 为本机，C 记录邀请人 A（显示备注名）"
+mkdir -p "$W/A-三方"; echo "初稿" > "$W/A-三方/方案.md"
+F7=$(t A add-folder 三方协作 "$W/A-三方" "$IB" "$IC" | sed -n 's/.*"id": "\(.*\)".*/\1/p' | head -1)
+wait_for "t B invites | grep -q $F7 && t C invites | grep -q $F7" "B、C 收到三方协作邀请" 60
+t B accept-invite "$F7" "$IA" >/dev/null; t C accept-invite "$F7" "$IA" >/dev/null
+wait_for "[ -f '$W/B-base/三方协作/方案.md' ] && [ -f '$W/C-base/三方协作/方案.md' ]" "三方协作同步到 B、C" 90
+ok "fj B $F7 \"f['owner']=='$IA' and f['role']=='member' and f['mode']=='collab'\"" "协作文件夹中 B 记录共享者为 A"
+ok "fails t C set-mode $F7 readonly | grep -q '只有共享者（'" "协作文件夹中成员 C 不能抢先设为只读（没有模式文件也不行）"
+ok "[ ! -e '$W/C-base/三方协作/.teamsync.json' ] && fj C $F7 \"f['type']=='sendreceive'\"" "被拒绝后 C 没有写模式文件、类型不变"
+printf '{"mode":"readonly","owner":"%s"}' "$IC" > "$W/C-base/三方协作/.teamsync.json"; t C scan "$F7" >/dev/null
+wait_for "grep -q '$IC' '$W/B-base/三方协作/.teamsync.json' 2>/dev/null" "C 伪造的「共享者=C」模式文件经 A 同步到 B" 60
+sleep 8
+ok "fj B $F7 \"f['type']=='sendreceive' and f['owner']=='$IA'\" && fj A $F7 \"f['type']=='sendreceive' and f['role']=='owner'\"" "B 忽略伪造文件（共享者不一致），A 仍是共享者"
+printf '{"mode":"readonly","owner":"%s","updatedAt":"2026-01-01T00:00:00Z"}' "$IA" > "$W/C-base/三方协作/.teamsync.json"; t C scan "$F7" >/dev/null
+wait_for "grep -q '2026-01-01' '$W/B-base/三方协作/.teamsync.json' 2>/dev/null" "C 冒充 A 的模式文件同步到 B" 60
+sleep 8
+ok "fj B $F7 \"f['type']=='sendreceive'\"" "B 忽略冒充文件（最后修改者不是 A）"
+ok "grep -q '忽略文件夹 $F7' '$W/B.log'" "B 的日志记录了被忽略的模式文件"
+t A set-mode "$F7" readonly >/dev/null
+wait_for "fj B $F7 \"f['type']=='receiveonly'\" && fj C $F7 \"f['type']=='receiveonly'\"" "真正的共享者 A 设为只读后，B、C 跟随" 60
+t A set-mode "$F7" collab >/dev/null
+wait_for "fj B $F7 \"f['type']=='sendreceive'\" && fj C $F7 \"f['type']=='sendreceive'\"" "A 改回协作后 B、C 跟随" 60
+# 旧版本迁移：清除 C 的共享者记录后重启
+kill "${PID[C]}"; wait "${PID[C]}" 2>/dev/null || true; rm -f "$W/C/daemon.json"
+python3 -c "import json; p='$W/C/settings.json'; s=json.load(open(p)); s.pop('owners',None); json.dump(s,open(p,'w'))"
+start C; until [ -f "$W/C/daemon.json" ]; do sleep 0.5; done
+wait_for "fj C $F6 \"f['owner']=='$IA'\" && fj C $F7 \"f['owner']=='$IA'\" && fj C $F3 \"f['owner']=='$IA'\"" "升级迁移：C 的只读/协作文件夹都推断出共享者 A" 60
+ok "grep -q '迁移：文件夹 $F7 的共享者' '$W/C.log'" "迁移写入日志"
+ok "fails t C set-owner $F7 $IC | grep -q '已经确定'" "已确定的共享者不能再修改"
 echo "全部通过"

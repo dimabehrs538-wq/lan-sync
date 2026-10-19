@@ -1,6 +1,6 @@
 [package]
 name = "teamsync"
-version = "0.3.0"
+version = "0.3.1"
 description = "内网团队文件夹同步"
 edition = "2021"
 

@@ -20,9 +20,9 @@ func (s *Server) setMode(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err)
 		return
 	}
-	err := s.Team.SetMode(r.Context(), r.PathValue("id"), in.Mode)
-	if errors.Is(err, team.ErrNotOwner) {
-		writeErr(w, 403, err)
+	id := r.PathValue("id")
+	err := s.Team.SetMode(r.Context(), id, in.Mode, s.ownerOf(id))
+	if s.modeError(r.Context(), w, id, err) {
 		return
 	}
 	respond(w, nil, err)
@@ -72,7 +72,7 @@ func (s *Server) restoreVersion(w http.ResponseWriter, r *http.Request) {
 
 // SyncModes 让本机跟随共享者设置的模式，并在动态中提示。
 func (s *Server) SyncModes(ctx context.Context) {
-	ch, err := s.Team.SyncModes(ctx)
+	ch, err := s.Team.SyncModes(ctx, s.ownerOf, logIgnoredMode)
 	if err != nil {
 		return
 	}

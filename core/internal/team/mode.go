@@ -70,24 +70,30 @@ func WriteMode(dir string, m ShareMode) error {
 	return nil
 }
 
-// FolderMode 返回文件夹的模式与本机角色（owner=共享者 / member=成员 / ""=协作，无共享者）。
-func FolderMode(f stclient.Folder, my string) (mode, role string) {
-	switch f.Type {
-	case "sendonly":
-		return ModeReadOnly, "owner"
-	case "receiveonly":
-		return ModeReadOnly, "member"
+// FolderMode 返回文件夹的模式（由本机文件夹类型决定）与本机角色：
+// owner=本机是共享者 / member=成员 / ""=共享者未知。owner 为本机记录的共享者。
+func FolderMode(f stclient.Folder, my, owner string) (mode, role string) {
+	mode = ModeCollab
+	if f.Type == "sendonly" || f.Type == "receiveonly" {
+		mode = ModeReadOnly
 	}
-	if m, ok := ReadMode(f.Path); ok && m.Mode == ModeReadOnly && m.Owner != my {
-		return ModeReadOnly, "member" // 已收到只读设置，等待切换
+	switch {
+	case owner == "":
+		role = ""
+	case owner == my:
+		role = "owner"
+	default:
+		role = "member"
 	}
-	return ModeCollab, ""
+	return
 }
 
 var ErrNotOwner = errors.New("只有共享者可以修改这个文件夹的共享模式")
+var ErrOwnerUnknown = errors.New("这个文件夹的共享者未知，暂时不能修改共享模式")
 
 // SetMode 由共享者切换模式：只读=仅发送 + 名称标记 + 模式文件；协作=收发 + 模式文件。
-func (s *Service) SetMode(ctx context.Context, id, mode string) error {
+// owner 为本机记录的共享者，必须是本机。
+func (s *Service) SetMode(ctx context.Context, id, mode, owner string) error {
 	if mode != ModeCollab && mode != ModeReadOnly {
 		return errors.New("未知的共享模式")
 	}
@@ -99,10 +105,10 @@ func (s *Service) SetMode(ctx context.Context, id, mode string) error {
 	if err != nil {
 		return err
 	}
-	if f.Type == "receiveonly" {
-		return ErrNotOwner
+	if owner == "" {
+		return ErrOwnerUnknown
 	}
-	if m, ok := ReadMode(f.Path); ok && m.Owner != "" && m.Owner != my {
+	if owner != my {
 		return ErrNotOwner
 	}
 	typ := "sendreceive"
@@ -128,7 +134,8 @@ type ModeChange struct {
 }
 
 // SyncModes 让成员一侧跟随共享者写入的模式文件：只读 -> 仅接收；协作 -> 收发。
-func (s *Service) SyncModes(ctx context.Context) ([]ModeChange, error) {
+// 只采信来自本机记录的共享者的文件（见 TrustedMode），其他情况忽略并通过 ignored 回调记录。
+func (s *Service) SyncModes(ctx context.Context, ownerOf func(id string) string, ignored func(f stclient.Folder, reason string)) ([]ModeChange, error) {
 	my, err := s.MyID(ctx)
 	if err != nil {
 		return nil, err
@@ -139,8 +146,15 @@ func (s *Service) SyncModes(ctx context.Context) ([]ModeChange, error) {
 	}
 	var out []ModeChange
 	for _, f := range fs {
-		m, ok := ReadMode(f.Path)
-		if !ok || m.Owner == "" || m.Owner == my || f.Type == "sendonly" {
+		owner := ownerOf(f.ID)
+		if owner == my || f.Type == "sendonly" {
+			continue
+		}
+		m, ok, reason := s.TrustedMode(ctx, f, owner)
+		if !ok {
+			if reason != "" && ignored != nil {
+				ignored(f, reason)
+			}
 			continue
 		}
 		want := "sendreceive"

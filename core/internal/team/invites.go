@@ -31,6 +31,8 @@ type Settings struct {
 	Retention *Retention `json:"retention,omitempty"`
 	// FolderRetention 单独设置了保留规则的文件夹
 	FolderRetention map[string]Retention `json:"folderRetention,omitempty"`
+	// Owners 每个文件夹的共享者设备 ID（本机记录，确定后不变；"" = 未知）
+	Owners map[string]string `json:"owners,omitempty"`
 }
 
 // IgnoredInvite 记录被忽略（或本机已移除）的文件夹邀请（文件夹 + 邀请人）。

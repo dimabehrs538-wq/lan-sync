@@ -104,6 +104,7 @@ func (s *Server) GuardOverlaps(ctx context.Context) {
 // RunOverlapGuard 启动时及之后每分钟检查一次。
 func (s *Server) RunOverlapGuard(ctx context.Context, every time.Duration) {
 	s.GuardOverlaps(ctx)
+	s.MigrateOwners(ctx)
 	s.SyncModes(ctx)
 	s.GuardRetention(ctx, false)
 	t := time.NewTicker(every)
@@ -114,6 +115,7 @@ func (s *Server) RunOverlapGuard(ctx context.Context, every time.Duration) {
 			return
 		case <-t.C:
 			s.GuardOverlaps(ctx)
+			s.MigrateOwners(ctx)
 			s.SyncModes(ctx)
 			s.GuardRetention(ctx, false)
 		}

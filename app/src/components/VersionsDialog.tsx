@@ -69,7 +69,7 @@ export function VersionsDialog({ folder, onClose }: { folder: Folder | null; onC
             </TabsList>
           </Tabs>
         </div>
-        <ScrollArea className="h-[420px] rounded-md border">
+        <ScrollArea className="h-[min(420px,45vh)] rounded-md border">
           {list === null ? (
             <div className="flex h-40 items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />正在读取…</div>
           ) : shown.length === 0 ? (

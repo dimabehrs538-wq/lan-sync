@@ -329,3 +329,34 @@ func (c *Client) RestoreVersions(ctx context.Context, folder string, which map[s
 	err = c.Do(ctx, "POST", "/rest/folder/versions", url.Values{"folder": {folder}}, body, &errs)
 	return
 }
+
+// DBFileEntry 是 /rest/db/file 返回的一个版本（global 或 local）。
+type DBFileEntry struct {
+	Name       string    `json:"name"`
+	Size       int64     `json:"size"`
+	Modified   time.Time `json:"modified"`
+	ModifiedBy string    `json:"modifiedBy"` // 最后修改者的短设备 ID（设备 ID 前 7 位）
+	Deleted    bool      `json:"deleted"`
+	Invalid    bool      `json:"invalid"`
+}
+
+// DBFile 是文件在引擎数据库中的全局版本与本机版本。
+type DBFile struct {
+	Global DBFileEntry `json:"global"`
+	Local  DBFileEntry `json:"local"`
+}
+
+// DBFile 查询文件在引擎数据库中的记录（含最后修改者）。
+func (c *Client) DBFile(ctx context.Context, folder, file string) (f DBFile, err error) {
+	err = c.Do(ctx, "GET", "/rest/db/file", url.Values{"folder": {folder}, "file": {file}}, nil, &f)
+	return
+}
+
+// ShortID 返回设备 ID 的短 ID（与 Syncthing 的 modifiedBy 格式一致：去掉连字符后的前 7 位）。
+func ShortID(id string) string {
+	s := strings.ReplaceAll(id, "-", "")
+	if len(s) > 7 {
+		s = s[:7]
+	}
+	return s
+}

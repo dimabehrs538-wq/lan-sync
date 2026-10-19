@@ -107,6 +107,7 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("GET /api/activity", s.listActivity)
 	m.HandleFunc("POST /api/path-check", s.pathCheck)
 	m.HandleFunc("PUT /api/folders/{id}/mode", s.setMode)
+	m.HandleFunc("PUT /api/folders/{id}/owner", s.setOwner)
 	m.HandleFunc("PUT /api/folders/{id}/delete-protection", s.setDeleteProtection)
 	m.HandleFunc("POST /api/folders/{id}/revert", s.revert)
 	m.HandleFunc("POST /api/folders/{id}/override", s.override)
@@ -249,8 +250,11 @@ type folderView struct {
 	Members   []folderMember         `json:"members"`
 	Problem   *team.Problem          `json:"problem,omitempty"`
 	// Mode 共享模式 collab|readonly；Role 只读时本机角色 owner(共享者)|member(成员)
-	Mode             string `json:"mode"`
-	Role             string `json:"role,omitempty"`
+	Mode string `json:"mode"`
+	Role string `json:"role,omitempty"`
+	// Owner 本机记录的共享者设备 ID（空 = 未知），OwnerName 其名称（本机为“我”）
+	Owner            string `json:"owner,omitempty"`
+	OwnerName        string `json:"ownerName,omitempty"`
 	DeleteProtection bool   `json:"deleteProtection"`
 	// Retention 实际使用的历史版本保留规则；VersionsSize/VersionsFiles 为 .stversions 当前占用
 	Retention     retentionView `json:"retention"`
@@ -276,7 +280,16 @@ func (s *Server) folders(w http.ResponseWriter, r *http.Request) {
 	out := make([]folderView, 0, len(fs))
 	for _, f := range fs {
 		v := folderView{Folder: f, Members: []folderMember{}, DeleteProtection: f.Versioning.Type != ""}
-		v.Mode, v.Role = team.FolderMode(f, my)
+		v.Owner = s.ownerOf(f.ID)
+		v.Mode, v.Role = team.FolderMode(f, my, v.Owner)
+		if v.Owner == my {
+			v.OwnerName = "我"
+		} else if v.Owner != "" {
+			v.OwnerName = names[v.Owner]
+			if v.OwnerName == "" {
+				v.OwnerName = stclient.ShortID(v.Owner)
+			}
+		}
 		v.Folder.Label, _ = team.ParseLabel(f.Label)
 		v.Retention.Retention, v.Retention.Custom = s.retentionFor(f.ID)
 		v.VersionsSize, v.VersionsFiles = s.versionsSize(f)
@@ -335,12 +348,19 @@ func (s *Server) createFolder(w http.ResponseWriter, r *http.Request) {
 	if err == nil && s.Store != nil {
 		s.Store.RecordAdded(f.ID, time.Now())
 	}
+	my := ""
+	if err == nil {
+		my, err = s.Team.MyID(r.Context())
+	}
+	if err == nil && s.Store != nil {
+		err = s.Store.RecordNewFolderOwner(f.ID, my) // 新建的文件夹：共享者是本机
+	}
 	if err == nil {
 		ret, _ := s.retentionFor(f.ID)
 		_, err = s.Team.ApplyRetention(r.Context(), f, ret)
 	}
 	if err == nil && in.Mode == team.ModeReadOnly {
-		err = s.Team.SetMode(r.Context(), f.ID, team.ModeReadOnly)
+		err = s.Team.SetMode(r.Context(), f.ID, team.ModeReadOnly, s.ownerOf(f.ID))
 		f.Type = "sendonly"
 	}
 	if err == nil && in.DeleteProtection != nil && !*in.DeleteProtection {
@@ -538,6 +558,7 @@ func (s *Server) removeFolder(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.Store != nil {
 		_ = s.Store.SetFolderRetention(r.PathValue("id"), nil)
+		_ = s.Store.ForgetOwner(r.PathValue("id"))
 	}
 	writeJSON(w, res)
 }
@@ -637,6 +658,7 @@ func (s *Server) acceptInvitation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.Store.Unignore(in.FolderID)
+	_ = s.Store.RecordNewFolderOwner(in.FolderID, in.DeviceID) // 共享者 = 发出这条邀请的设备
 	// 重新接受（例如移除后再加入）算作新添加
 	_ = s.Store.Update(func(st *team.Settings) { delete(st.AddedAt, in.FolderID) })
 	s.Store.RecordAdded(in.FolderID, time.Now())

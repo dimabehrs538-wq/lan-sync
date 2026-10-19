@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { AlertTriangle, Check, Eye, Info, Lock, ShieldCheck, Settings2, Undo2, Upload, FolderInput, FolderMinus, MoreHorizontal, SlidersHorizontal, Trash2, FolderOpen, FolderPlus, FolderSync, History, Mail, Pause, Play, RefreshCw, Send, UserCog, Users, Wrench, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, Crown, Eye, Info, Lock, ShieldCheck, Settings2, Undo2, Upload, FolderInput, FolderMinus, MoreHorizontal, SlidersHorizontal, Trash2, FolderOpen, FolderPlus, FolderSync, History, Mail, Pause, Play, RefreshCw, Send, UserCog, Users, Wrench, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { VersionsDialog } from "@/components/VersionsDialog";
 import { formatCap, RetentionDialog, retentionText } from "@/components/Retention";
 import { Avatar, Dot, Empty, PageHeader } from "@/components/common";
@@ -36,11 +37,24 @@ export function PathField({ value, onChange, placeholder }: { value: string; onC
 }
 
 /** 成员多选列表 */
-function MemberPicker({ members, selected, onChange }: { members: Device[]; selected: string[]; onChange: (v: string[]) => void }) {
+/** 成员多选；collapsible 时默认折叠为一行摘要（已选 3/3 · 杨广、钱橙…），点击展开列表 */
+function MemberPicker({ members, selected, onChange, collapsible }: { members: Device[]; selected: string[]; onChange: (v: string[]) => void; collapsible?: boolean }) {
+  const [open, setOpen] = useState(!collapsible);
   if (members.length === 0) return <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">还没有成员，可以先创建，之后在“成员”页添加同事后再共享。</p>;
   const all = selected.length === members.length;
+  const names = members.filter((m) => selected.includes(m.deviceID)).map((m) => m.name || short(m.deviceID));
+  const summary = `已选 ${selected.length}/${members.length}` + (names.length ? ` · ${names.slice(0, 2).join("、")}${names.length > 2 ? "…" : ""}` : " · 暂不邀请");
   return (
-    <div className="rounded-lg border">
+    <div className="rounded-lg border" data-testid="member-picker">
+      {collapsible && (
+        <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} data-testid="member-picker-toggle"
+          className={cn("flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-muted/50", open && "border-b")}>
+          <Users className="size-4 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate">{summary}</span>
+          <ChevronDown className={cn("size-4 text-muted-foreground transition-transform", open && "rotate-180")} />
+        </button>
+      )}
+      {open && <>
       <label className="flex cursor-pointer items-center gap-3 border-b px-3 py-2 text-xs text-muted-foreground">
         <Checkbox checked={all ? true : selected.length ? "indeterminate" : false} onCheckedChange={(v) => onChange(v ? members.map((m) => m.deviceID) : [])} />
         全选（已选 {selected.length}/{members.length}）
@@ -58,6 +72,7 @@ function MemberPicker({ members, selected, onChange }: { members: Device[]; sele
           </label>
         ))}
       </div>
+      </>}
     </div>
   );
 }
@@ -108,11 +123,17 @@ function ProtectRow({ checked, onChange, retention }: { checked: boolean; onChan
 
 /** 文件夹设置：共享模式（仅共享者可改）与删除保护 */
 function FolderSettingsDialog({ folder, onClose }: { folder: Folder | null; onClose: () => void }) {
-  const { run } = useData();
+  const { run, status } = useData();
   const [mode, setMode] = useState<Mode>("collab");
   const [protect, setProtect] = useState(true);
-  useEffect(() => { if (folder) { setMode(folder.mode); setProtect(folder.deleteProtection); } }, [folder]);
-  const member = folder?.role === "member";
+  const [pick, setPick] = useState("");
+  useEffect(() => { if (folder) { setMode(folder.mode); setProtect(folder.deleteProtection); setPick(""); } }, [folder]);
+  const isOwner = folder?.role === "owner";
+  const unknown = !!folder && !folder.owner;
+  const candidates = folder ? [...(status?.myID ? [{ id: status.myID, name: "我" }] : []), ...folder.members.map((m) => ({ id: m.deviceID, name: m.name || short(m.deviceID) }))] : [];
+  const desc = isOwner ? "你是这个文件夹的共享者。切换共享模式后，已加入的成员会自动跟随，无需重新邀请。"
+    : unknown ? "这个文件夹的共享者未知（由旧版本创建，无法可靠判断），暂时谁都不能修改共享模式。"
+    : "这是同事共享给你的文件夹，共享模式由共享者决定，切换后你这里会自动跟随。";
   const save = async () => {
     if (!folder) return;
     const tasks: (() => Promise<unknown>)[] = [];
@@ -125,9 +146,29 @@ function FolderSettingsDialog({ folder, onClose }: { folder: Folder | null; onCl
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>「{folder?.label}」的设置</DialogTitle>
-          <DialogDescription>{member ? "这是同事共享给你的只读文件夹，共享模式由共享者决定。" : "切换共享模式后，已加入的成员会自动跟随，无需重新邀请。"}</DialogDescription>
+          <DialogDescription>{desc}</DialogDescription>
         </DialogHeader>
-        <div className="space-y-2"><Label>共享模式</Label><ModePicker value={mode} onChange={setMode} disabled={member} /></div>
+        <div className="flex items-center gap-2 rounded-lg border p-3 text-sm" data-testid="folder-owner">
+          <Crown className="size-4 text-amber-500" />
+          <span className="text-muted-foreground">共享者</span>
+          {unknown ? (
+            <div className="ml-auto flex items-center gap-2">
+              <Select value={pick} onValueChange={setPick}>
+                <SelectTrigger size="sm" className="w-36 text-xs"><SelectValue placeholder="指定共享者…" /></SelectTrigger>
+                <SelectContent>{candidates.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
+              </Select>
+              <Button size="sm" variant="outline" disabled={!pick} onClick={async () => {
+                if (await run(() => api("PUT", `/api/folders/${folder!.id}/owner`, { deviceID: pick }), "已指定共享者")) onClose();
+              }}>确定</Button>
+            </div>
+          ) : <span className="font-medium">{folder?.ownerName}</span>}
+        </div>
+        {unknown && <p className="-mt-2 text-xs text-muted-foreground">只影响本机：请选择最初创建并共享这个文件夹的人，确定后不能修改。其他成员按各自的记录判断。</p>}
+        <div className="space-y-2">
+          <Label>共享模式</Label>
+          <ModePicker value={mode} onChange={setMode} disabled={!isOwner} />
+          {!isOwner && <p className="text-xs text-muted-foreground" data-testid="mode-locked">{unknown ? "共享者未知，不能修改共享模式" : `只有共享者（${folder?.ownerName}）可以修改`}</p>}
+        </div>
         <ProtectRow checked={protect} onChange={setProtect} retention={folder?.retention} />
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>取消</Button>
@@ -166,7 +207,7 @@ function AddFolderDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
             )}
           </div>
           <div className="space-y-2"><Label>共享模式</Label><ModePicker value={mode} onChange={setMode} /></div>
-          <div className="space-y-2"><Label>邀请成员</Label><MemberPicker members={members} selected={sel} onChange={setSel} /></div>
+          <div className="space-y-2"><Label>邀请成员</Label><MemberPicker members={members} selected={sel} onChange={setSel} collapsible /></div>
           <ProtectRow checked={protect} onChange={setProtect} />
         </form>
         <DialogFooter>
@@ -226,7 +267,7 @@ function AcceptDialog({ inv, onClose }: { inv: Invitation | null; onClose: () =>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>加入「{inv?.label}」</DialogTitle>
-          <DialogDescription>{inv?.deviceName || short(inv?.deviceID)} 邀请你加入这个团队文件夹。每个团队文件夹需要单独的位置，默认放在“接收文件夹的默认位置”下以文件夹名命名的子文件夹中。</DialogDescription>
+          <DialogDescription>{inv?.deviceName || short(inv?.deviceID)} 邀请你加入这个团队文件夹，接受后 TA 将作为这个文件夹的共享者（只有共享者能切换共享模式）。每个团队文件夹需要单独的位置，默认放在“接收文件夹的默认位置”下以文件夹名命名的子文件夹中。</DialogDescription>
         </DialogHeader>
         {inv?.mode === "readonly" && (
           <p className="flex gap-1.5 rounded-md border border-sky-500/30 bg-sky-500/5 p-2.5 text-xs text-sky-800 dark:text-sky-300"><Eye className="mt-0.5 size-3.5 shrink-0" />这是<b>只读共享</b>：你会收到共享者的最新文件，但你在本机的修改不会同步给其他人。</p>
@@ -317,14 +358,14 @@ function ReadOnlyBar({ folder }: { folder: Folder }) {
   const { run } = useData();
   if (folder.mode !== "readonly" || folder.paused) return null;
   const changed = folder.status?.receiveOnlyChangedFiles ?? 0;
-  if (folder.role === "member" && changed > 0) return (
+  if (folder.type === "receiveonly" && changed > 0) return (
     <div className="mt-3 flex items-center gap-2 rounded-lg border border-amber-400/40 bg-amber-500/10 p-2.5 text-xs text-amber-800 dark:text-amber-300" data-testid="readonly-local-changes">
       <AlertTriangle className="size-4 shrink-0" />
       <span className="flex-1">本机有 <b>{changed}</b> 个文件与共享版本不同（只读文件夹中的修改不会同步给其他人）。</span>
       <Button size="sm" variant="outline" className="h-7" onClick={() => run(() => api("POST", `/api/folders/${folder.id}/revert`), "已恢复为共享版本")}><Undo2 />恢复为共享版本</Button>
     </div>
   );
-  if (folder.role === "owner" && (folder.status?.needFiles ?? 0) > 0) return (
+  if (folder.type === "sendonly" && (folder.status?.needFiles ?? 0) > 0) return (
     <div className="mt-3 flex items-center gap-2 rounded-lg border border-sky-500/30 bg-sky-500/5 p-2.5 text-xs text-sky-800 dark:text-sky-300">
       <Info className="size-4 shrink-0" />
       <span className="flex-1">有 {folder.status!.needFiles} 个文件在其他成员处版本不同（只读共享不会采用他们的改动）。</span>
@@ -495,6 +536,7 @@ export default function Folders() {
                           ? <button className="flex items-center gap-1 hover:text-foreground hover:underline" onClick={() => setVersions(f)}><History className="size-3" />历史版本 {retentionText(f.retention)}{f.versionsSize ? ` · 占用 ${formatBytes(f.versionsSize)}` : ""}</button>
                           : <span className="flex items-center gap-1 text-amber-600"><ShieldCheck className="size-3" />未开启删除保护</span>}
                         {f.fsWatcherEnabled && <span>实时监视</span>}
+                        <span className="flex items-center gap-1" data-testid="owner-label"><Crown className="size-3" />{f.owner ? `共享者 ${f.ownerName}` : "共享者未知"}</span>
                       </div>
                       <div className="mt-3 flex flex-wrap items-center gap-1.5">
                         <Users className="mr-1 size-3.5 text-muted-foreground" />

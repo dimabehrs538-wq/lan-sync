@@ -14,6 +14,8 @@ export interface Folder {
   problem?: FolderProblem;
   /** 共享模式：collab 协作 / readonly 只读共享；role：只读时本机为共享者 owner 或成员 member */
   mode: "collab" | "readonly"; role?: "owner" | "member"; deleteProtection: boolean;
+  /** 本机记录的共享者（空 = 未知；确定后不变）及其名称（本机为“我”） */
+  owner?: string; ownerName?: string;
   /** 实际使用的历史版本保留规则（custom=单独设置）；versionsSize/versionsFiles 为当前历史版本占用 */
   retention?: Retention & { custom: boolean }; versionsSize?: number; versionsFiles?: number;
 }

@@ -40,6 +40,7 @@ const usage = `teamsyncd - 内网团队文件夹同步内核
   teamsyncd reinvite <文件夹ID> <设备ID>          重新邀请成员
   teamsyncd invites                               查看收到的文件夹邀请
   teamsyncd set-mode <文件夹ID> collab|readonly     切换共享模式（协作 / 只读共享，仅共享者）
+  teamsyncd set-owner <文件夹ID> <设备ID>           共享者未知时在本机指定共享者（确定后不能修改）
   teamsyncd delete-protection <文件夹ID> on|off    删除保护（保留被删除/覆盖的历史版本）
   teamsyncd revert <文件夹ID>                      只读文件夹：放弃本机改动，恢复为共享版本
   teamsyncd override <文件夹ID>                    只读共享者：以本机版本为准覆盖成员
@@ -344,6 +345,11 @@ func runCLI(cmd string, args []string, home string) error {
 			return err
 		}
 		return call("PUT", "/api/folders/"+args[0]+"/mode", map[string]string{"mode": args[1]})
+	case "set-owner":
+		if err := need(2); err != nil {
+			return err
+		}
+		return call("PUT", "/api/folders/"+args[0]+"/owner", map[string]string{"deviceID": args[1]})
 	case "delete-protection":
 		if err := need(2); err != nil {
 			return err

@@ -52,12 +52,18 @@ func TestModeFileAndFolderMode(t *testing.T) {
 		t.Fatal("未知模式应忽略")
 	}
 	cases := []struct {
-		typ, mode, role string
-	}{{"sendonly", ModeReadOnly, "owner"}, {"receiveonly", ModeReadOnly, "member"}, {"sendreceive", ModeCollab, ""}}
+		typ, owner, mode, role string
+	}{{"sendonly", "ME", ModeReadOnly, "owner"}, {"receiveonly", "A", ModeReadOnly, "member"}, {"sendreceive", "", ModeCollab, ""}, {"sendreceive", "A", ModeCollab, "member"}}
 	for _, c := range cases {
-		if m, r := FolderMode(stclient.Folder{Type: c.typ, Path: t.TempDir()}, "ME"); m != c.mode || r != c.role {
+		if m, r := FolderMode(stclient.Folder{Type: c.typ, Path: t.TempDir()}, "ME", c.owner); m != c.mode || r != c.role {
 			t.Errorf("%s: %s/%s", c.typ, m, r)
 		}
+	}
+	// 角色和模式不从同步来的文件推导：成员伪造“共享者是我”的只读文件不会改变任何东西
+	d2 := t.TempDir()
+	_ = WriteMode(d2, ShareMode{Mode: ModeReadOnly, Owner: "ME"})
+	if m, r := FolderMode(stclient.Folder{Type: "sendreceive", Path: d2}, "ME", "A"); m != ModeCollab || r != "member" {
+		t.Errorf("伪造文件不应影响: %s/%s", m, r)
 	}
 }
 
