@@ -25,7 +25,7 @@ type Client struct {
 var DefaultEventTypes = []string{
 	"DeviceConnected", "DeviceDisconnected", "PendingDevicesChanged", "PendingFoldersChanged",
 	"RemoteChangeDetected", "LocalChangeDetected", "FolderSummary", "StateChanged",
-	"FolderCompletion", "FolderErrors", "ConfigSaved",
+	"FolderCompletion", "FolderErrors", "ConfigSaved", "ItemFinished",
 }
 
 func New(base, key string) *Client {
@@ -156,6 +156,8 @@ type FolderStatus struct {
 	GlobalBytes int64  `json:"globalBytes"`
 	Errors      int    `json:"errors"`
 	Error       string `json:"error,omitempty"`
+	// 仅接收（只读）文件夹中本机改动、未被同步的文件数
+	ReceiveOnlyChangedFiles int `json:"receiveOnlyChangedFiles"`
 }
 
 type Event struct {
@@ -292,5 +294,38 @@ type Completion struct {
 // Completion 查询某设备在某文件夹上的同步完成度与共享状态。
 func (c *Client) Completion(ctx context.Context, folder, device string) (r Completion, err error) {
 	err = c.Do(ctx, "GET", "/rest/db/completion", url.Values{"folder": {folder}, "device": {device}}, nil, &r)
+	return
+}
+
+// Revert 把仅接收文件夹的本机改动恢复为共享版本（POST /rest/db/revert）。
+func (c *Client) Revert(ctx context.Context, folder string) error {
+	return c.Do(ctx, "POST", "/rest/db/revert", url.Values{"folder": {folder}}, nil, nil)
+}
+
+// Override 以本机（仅发送）版本覆盖其他成员的改动（POST /rest/db/override）。
+func (c *Client) Override(ctx context.Context, folder string) error {
+	return c.Do(ctx, "POST", "/rest/db/override", url.Values{"folder": {folder}}, nil, nil)
+}
+
+// FileVersion 是历史版本中的一个版本。
+type FileVersion struct {
+	VersionTime time.Time `json:"versionTime"`
+	ModTime     time.Time `json:"modTime"`
+	Size        int64     `json:"size"`
+}
+
+// Versions 列出文件夹的历史版本（GET /rest/folder/versions），键为相对路径（使用 "/" 分隔）。
+func (c *Client) Versions(ctx context.Context, folder string) (m map[string][]FileVersion, err error) {
+	err = c.Do(ctx, "GET", "/rest/folder/versions", url.Values{"folder": {folder}}, nil, &m)
+	return
+}
+
+// RestoreVersions 恢复指定版本（POST /rest/folder/versions），返回每个路径的错误信息（成功的不出现）。
+func (c *Client) RestoreVersions(ctx context.Context, folder string, which map[string]time.Time) (errs map[string]string, err error) {
+	body := map[string]string{}
+	for p, t := range which {
+		body[p] = t.Format(time.RFC3339Nano)
+	}
+	err = c.Do(ctx, "POST", "/rest/folder/versions", url.Values{"folder": {folder}}, body, &errs)
 	return
 }

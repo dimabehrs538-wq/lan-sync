@@ -16,7 +16,7 @@ PIDS=()
 cleanup(){ kill "${PIDS[@]}" 2>/dev/null || true; wait 2>/dev/null || true; rm -rf "$W"; }
 trap cleanup EXIT
 declare -A PORT=([A]=22101 [B]=22102 [C]=22103) PID
-start(){ XDG_DATA_HOME="$W/$1-xdg" "$T" serve --home "$W/$1" --folders-dir "$W/$1-base" --listen "tcp://0.0.0.0:${PORT[$1]}" --syncthing "$ST" >>"$W/$1.log" 2>&1 & PID[$1]=$!; PIDS+=($!); }
+start(){ TEAMSYNC_GUARD_INTERVAL_S=3 XDG_DATA_HOME="$W/$1-xdg" "$T" serve --home "$W/$1" --folders-dir "$W/$1-base" --listen "tcp://0.0.0.0:${PORT[$1]}" --syncthing "$ST" >>"$W/$1.log" 2>&1 & PID[$1]=$!; PIDS+=($!); }
 for n in A B C; do start $n; done
 for n in A B C; do until [ -f "$W/$n/daemon.json" ]; do sleep 0.5; done; done
 id(){ "$T" status --home "$W/$1" | sed -n 's/.*"myID": "\(.*\)".*/\1/p'; }
@@ -173,4 +173,65 @@ fails t A resume "$FID2" | grep -q '互相同步' && echo "✔ 重叠时不能�
 fails t A relocate "$FID2" "$W/A-docs/嵌套2" | grep -q '之内' && echo "✔ 重新选择位置仍会检查" || { echo "✘ 重新选择位置仍会检查"; exit 1; }
 t A relocate "$FID2" "$W/A-临时新" | grep -q '"ok": true' && echo "✔ 重新选择独立位置" || { echo "✘ 重新选择独立位置"; exit 1; }
 wait_for "t A folders | python3 -c \"import json,sys; f=[x for x in json.load(sys.stdin) if x['id']=='$FID2'][0]; sys.exit(0 if not f['paused'] and 'problem' not in f else 1)\"" "换位置后自动恢复同步" 30
+# ---- v0.2.9：只读共享、删除保护、历史版本 ----
+fj(){ local n=$1 id=$2; shift 2; t "$n" folders | python3 -c "import json,sys; f=[x for x in json.load(sys.stdin) if x['id']=='$id'][0]; sys.exit(0 if ($*) else 1)"; }
+ok(){ if eval "$1"; then echo "✔ $2"; else echo "✘ $2"; exit 1; fi; }
+mkdir -p "$W/A-只读"; echo "规范 v1" > "$W/A-只读/规范.md"
+F6=$(t A add-folder 制度规范 "$W/A-只读" "$IC" --readonly | sed -n 's/.*"id": "\(.*\)".*/\1/p' | head -1)
+ok "fj A $F6 \"f['type']=='sendonly' and f['mode']=='readonly' and f['role']=='owner' and f['label']=='制度规范' and f['deleteProtection']\"" "共享者一侧为仅发送（只读共享），名称不显示标记"
+wait_for "t C invites | python3 -c \"import json,sys; i=[x for x in json.load(sys.stdin) if x['folderID']=='$F6']; sys.exit(0 if i and i[0]['mode']=='readonly' and i[0]['label']=='制度规范' else 1)\"" "C 收到的邀请带有只读模式" 60
+t C accept-invite "$F6" "$IA" >/dev/null
+ok "fj C $F6 \"f['type']=='receiveonly' and f['role']=='member' and f['path'].endswith('/C-base/制度规范')\"" "C 自动以仅接收方式加入"
+wait_for "[ \"\$(cat '$W/C-base/制度规范/规范.md' 2>/dev/null)\" = '规范 v1' ]" "只读文件同步到 C" 90
+echo "C 私自修改" > "$W/C-base/制度规范/规范.md"; t C scan "$F6" >/dev/null
+wait_for "fj C $F6 \"f['status']['receiveOnlyChangedFiles']>=1\"" "C 的本机改动被识别为本机改动" 30
+sleep 6
+ok "[ \"\$(cat '$W/A-只读/规范.md')\" = '规范 v1' ]" "C 的本机改动不会同步到共享者"
+t C revert "$F6" >/dev/null
+wait_for "[ \"\$(cat '$W/C-base/制度规范/规范.md')\" = '规范 v1' ]" "恢复为共享版本" 60
+wait_for "fj C $F6 \"f['status']['receiveOnlyChangedFiles']==0\"" "恢复后本机改动数归零" 30
+echo "规范 v2" > "$W/A-只读/规范.md"; t A scan "$F6" >/dev/null
+wait_for "[ \"\$(cat '$W/C-base/制度规范/规范.md')\" = '规范 v2' ]" "共享者的更新继续同步到 C" 60
+ok "fails t C set-mode $F6 collab | grep -q '只有共享者'" "成员不能修改共享模式"
+t A set-mode "$F6" collab >/dev/null
+ok "fj A $F6 \"f['type']=='sendreceive' and f['mode']=='collab'\"" "共享者切换为协作"
+wait_for "fj C $F6 \"f['type']=='sendreceive'\"" "C 自动跟随切换为协作" 60
+wait_for "t C activity | grep -q '改为协作模式'" "C 动态提示模式变化" 10
+t A set-mode "$F6" readonly >/dev/null
+wait_for "fj C $F6 \"f['type']=='receiveonly'\"" "再切回只读后 C 自动变为仅接收" 60
+ok "! t C activity | grep -q 'teamsync.json'" "模式文件不出现在动态中"
+# 删除保护：成员删除的文件可一键恢复
+echo "第 1 周内容" > "$W/A-周报/第1周.md"; t A scan "$F3" >/dev/null
+wait_for "[ -f '$W/C-base/周报/第1周.md' ]" "协作文件夹同步 第1周.md" 60
+ok "fj C $F3 \"f['deleteProtection']\"" "新文件夹默认开启删除保护"
+rm "$W/A-周报/第1周.md"; t A scan "$F3" >/dev/null
+wait_for "[ ! -e '$W/C-base/周报/第1周.md' ]" "A 删除后 C 也被删除" 60
+wait_for "t C activity | grep -q '成员 张经理 删除了 第1周.md'" "C 动态显示「成员 张经理 删除了 第1周.md」" 20
+t C activity | python3 -c "
+import json,sys
+a=[x for x in json.load(sys.stdin) if '删除了 第1周.md' in x['message']][0]
+assert a['data']['folderID']=='$F3' and a['data']['path']=='第1周.md', a
+print('✔ 删除记录带有文件夹和路径（可一键恢复）')"
+t C versions "$F3" | python3 -c "
+import json,sys,os
+v=[x for x in json.load(sys.stdin) if x['path']=='第1周.md'][0]
+assert v['deleted'] and v['versions'] and os.path.isfile(v['versions'][0]['file']), v
+print('✔ 历史版本中有已删除的 第1周.md（可打开版本文件）')"
+t C restore "$F3" 第1周.md | grep -q '"ok": true' && echo "✔ 一键恢复最近版本" || { echo "✘ 恢复失败"; exit 1; }
+ok "[ \"\$(cat '$W/C-base/周报/第1周.md')\" = '第 1 周内容' ]" "C 本机文件已恢复"
+wait_for "[ -f '$W/A-周报/第1周.md' ]" "恢复的文件重新同步给 A" 60
+# 历史版本列表与指定版本恢复
+for v in 二 三; do sleep 1.2; echo "第 1 周 修订$v" > "$W/A-周报/第1周.md"; t A scan "$F3" >/dev/null; wait_for "grep -q 修订$v '$W/C-base/周报/第1周.md'" "C 收到修订$v" 60; done
+VT=$(t C versions "$F3" | python3 -c "
+import json,sys
+v=[x for x in json.load(sys.stdin) if x['path']=='第1周.md'][0]
+assert len(v['versions'])>=2 and not v['deleted'], v
+old=[x for x in v['versions'] if open(x['file']).read().strip()=='第 1 周内容']
+assert old, v; print(old[0]['versionTime'])")
+ok "[ -n '$VT' ]" "历史版本列出多个版本（时间/大小/文件）"
+t C restore "$F3" 第1周.md "$VT" | grep -q '"ok": true' && echo "✔ 恢复指定版本" || { echo "✘ 恢复指定版本失败"; exit 1; }
+ok "[ \"\$(cat '$W/C-base/周报/第1周.md')\" = '第 1 周内容' ]" "C 文件为所选版本"
+ok "fails t C restore $F3 不存在.md | grep -q '没有找到'" "不存在的文件提示中文错误"
+t C delete-protection "$F3" off >/dev/null
+ok "fj C $F3 \"not f['deleteProtection']\"" "可关闭删除保护"
 echo "全部通过"

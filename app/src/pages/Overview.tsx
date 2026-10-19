@@ -1,11 +1,12 @@
-import { Activity, AlertTriangle, ArrowRight, CheckCircle2, FolderSync, Loader2, ShieldCheck, Users } from "lucide-react";
+import { Activity, RotateCcw, AlertTriangle, ArrowRight, CheckCircle2, FolderSync, Loader2, ShieldCheck, Users } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, CopyButton, DeviceIdText, Dot, Empty, PageHeader } from "@/components/common";
-import { formatUptime, STATE_CN } from "@/lib/api";
+import { api, formatUptime, STATE_CN, type ActivityItem } from "@/lib/api";
+import { useState } from "react";
 import { useData } from "@/lib/store";
 import type { Page } from "@/App";
 
@@ -25,7 +26,14 @@ function Stat({ icon: Icon, label, value, sub, tone }: { icon: typeof Users; lab
 }
 
 export default function Overview({ go }: { go: (p: Page) => void }) {
-  const { status, folders, devices, conflicts, activity, nearby, invitations } = useData();
+  const { status, folders, devices, conflicts, activity, nearby, invitations, run } = useData();
+  const [restored, setRestored] = useState<Record<number, boolean>>({});
+  // 成员删除的文件：所在文件夹开启了删除保护时可一键恢复
+  const canRestore = (a: ActivityItem) => a.data?.action === "deleted" && a.data.type === "file" && !restored[a.id] &&
+    !!folders.find((f) => f.id === a.data!.folderID && f.deleteProtection);
+  const restore = async (a: ActivityItem) => {
+    if (await run(() => api("POST", `/api/folders/${a.data!.folderID}/versions/restore`, { path: a.data!.path }), `已恢复 ${a.data!.path}`)) setRestored((r) => ({ ...r, [a.id]: true }));
+  };
   const members = devices.filter((d) => !d.self);
   const online = members.filter((d) => d.connected);
   const pending = nearby.filter((n) => n.pending);
@@ -126,7 +134,11 @@ export default function Overview({ go }: { go: (p: Page) => void }) {
                 {activity.map((a) => (
                   <li key={a.id} className="mb-3 ml-4 last:mb-0">
                     <span className={`absolute -left-[5px] mt-1.5 size-2.5 rounded-full border-2 border-card ${a.type === "RemoteChangeDetected" ? "bg-sky-500" : a.type.startsWith("Device") ? "bg-emerald-500" : "bg-amber-500"}`} />
-                    <div className="text-sm">{a.message}</div>
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="min-w-0 flex-1">{a.message}</span>
+                      {canRestore(a) && <Button size="sm" variant="outline" className="h-6 px-2 text-xs" onClick={() => restore(a)}><RotateCcw className="size-3" />恢复</Button>}
+                      {restored[a.id] && <span className="text-xs text-emerald-600">已恢复</span>}
+                    </div>
                     <time className="text-[11px] text-muted-foreground">{new Date(a.time).toLocaleTimeString("zh-CN")}</time>
                   </li>
                 ))}

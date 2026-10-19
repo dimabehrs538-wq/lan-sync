@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/lan-sync/teamsync/core/internal/stclient"
+	"github.com/lan-sync/teamsync/core/internal/team"
 )
 
 var actionCN = map[string]string{"added": "新增了", "modified": "修改了", "deleted": "删除了", "update": "更新了", "delete": "删除了", "metadata": "更新了"}
@@ -36,11 +37,17 @@ func Translate(e stclient.Event, name func(string) string) (UIEvent, bool) {
 	case "PendingFoldersChanged":
 		u.Data = d // 由事件桥转换成邀请通知
 	case "RemoteChangeDetected":
+		if str("path") == team.ModeFile { // 共享模式文件，不作为文件动态显示
+			return u, false
+		}
 		act := actionCN[str("action")]
 		if act == "" {
 			act = "更新了"
 		}
 		u.Message = name(str("modifiedBy")) + " " + act + " " + str("path")
+		if str("action") == "deleted" {
+			u.Message = "成员 " + name(str("modifiedBy")) + " 删除了 " + str("path")
+		}
 		u.Notify = true
 		u.Data = d
 	case "LocalChangeDetected":

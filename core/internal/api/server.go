@@ -60,7 +60,7 @@ func (s *Server) Publish(e UIEvent) {
 		e.Notify = e.Message != "" && s.Store != nil && s.Store.Get().PresenceNotify
 	}
 	if e.Message != "" && s.Activity != nil {
-		it := s.Activity.Add(activity.Item{Type: e.Type, Message: e.Message, Time: e.Time, Key: e.Key}, e.merge)
+		it := s.Activity.Add(activity.Item{Type: e.Type, Message: e.Message, Time: e.Time, Key: e.Key, Data: activityData(e)}, e.merge)
 		e.ActivityID = it.ID
 	}
 	s.mu.Lock()
@@ -105,6 +105,12 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("GET /api/events", s.events)
 	m.HandleFunc("GET /api/activity", s.listActivity)
 	m.HandleFunc("POST /api/path-check", s.pathCheck)
+	m.HandleFunc("PUT /api/folders/{id}/mode", s.setMode)
+	m.HandleFunc("PUT /api/folders/{id}/delete-protection", s.setDeleteProtection)
+	m.HandleFunc("POST /api/folders/{id}/revert", s.revert)
+	m.HandleFunc("POST /api/folders/{id}/override", s.override)
+	m.HandleFunc("GET /api/folders/{id}/versions", s.listVersions)
+	m.HandleFunc("POST /api/folders/{id}/versions/restore", s.restoreVersion)
 	m.HandleFunc("DELETE /api/activity", s.clearActivity)
 	return s.cors(s.auth(m))
 }
@@ -239,6 +245,10 @@ type folderView struct {
 	Conflicts int                    `json:"conflicts"`
 	Members   []folderMember         `json:"members"`
 	Problem   *team.Problem          `json:"problem,omitempty"`
+	// Mode 共享模式 collab|readonly；Role 只读时本机角色 owner(共享者)|member(成员)
+	Mode             string `json:"mode"`
+	Role             string `json:"role,omitempty"`
+	DeleteProtection bool   `json:"deleteProtection"`
 }
 
 func (s *Server) folders(w http.ResponseWriter, r *http.Request) {
@@ -258,7 +268,9 @@ func (s *Server) folders(w http.ResponseWriter, r *http.Request) {
 	overlaps := s.overlaps(fs)
 	out := make([]folderView, 0, len(fs))
 	for _, f := range fs {
-		v := folderView{Folder: f, Members: []folderMember{}}
+		v := folderView{Folder: f, Members: []folderMember{}, DeleteProtection: f.Versioning.Type != ""}
+		v.Mode, v.Role = team.FolderMode(f, my)
+		v.Folder.Label, _ = team.ParseLabel(f.Label)
 		for _, d := range f.Devices {
 			if d.DeviceID == my {
 				continue
@@ -291,9 +303,11 @@ func decode(r *http.Request, v any) error { return json.NewDecoder(r.Body).Decod
 
 func (s *Server) createFolder(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Label   string    `json:"label"`
-		Path    string    `json:"path"`
-		Members *[]string `json:"members"` // 省略=全部成员
+		Label            string    `json:"label"`
+		Path             string    `json:"path"`
+		Members          *[]string `json:"members"`          // 省略=全部成员
+		Mode             string    `json:"mode"`             // collab(默认) | readonly
+		DeleteProtection *bool     `json:"deleteProtection"` // 省略=开启
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, 400, err)
@@ -307,9 +321,18 @@ func (s *Server) createFolder(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err)
 		return
 	}
+	in.Label, _ = team.ParseLabel(strings.TrimSpace(in.Label))
 	f, err := s.Team.CreateFolder(r.Context(), in.Label, in.Path, members)
 	if err == nil && s.Store != nil {
 		s.Store.RecordAdded(f.ID, time.Now())
+	}
+	if err == nil && in.Mode == team.ModeReadOnly {
+		err = s.Team.SetMode(r.Context(), f.ID, team.ModeReadOnly)
+		f.Type = "sendonly"
+	}
+	if err == nil && in.DeleteProtection != nil && !*in.DeleteProtection {
+		err = s.Team.SetDeleteProtection(r.Context(), f.ID, false)
+		f.Versioning = stclient.Versioning{}
 	}
 	respond(w, f, err)
 }
@@ -579,8 +602,17 @@ func (s *Server) acceptInvitation(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err)
 		return
 	}
-	f := team.NewTeamFolder(in.Label, in.Path, devs)
+	label, ro := team.ParseLabel(in.Label)
+	if pend, err := s.C.PendingFolders(ctx); err == nil {
+		if o, ok := pend[in.FolderID].OfferedBy[in.DeviceID]; ok {
+			_, ro = team.ParseLabel(o.Label) // 以邀请携带的模式为准
+		}
+	}
+	f := team.NewTeamFolder(label, in.Path, devs)
 	f.ID = in.FolderID
+	if ro {
+		f.Type = "receiveonly" // 只读共享：本机改动不会同步出去
+	}
 	if err := s.C.PutFolder(ctx, f); err != nil {
 		writeErr(w, 500, err)
 		return
@@ -738,6 +770,18 @@ func (s *Server) RunEventBridge(ctx context.Context) {
 				if changed, _ := s.Team.ApplyAnnounced(ctx, s.Store, d.ID, d.DeviceName); changed {
 					names.Invalidate()
 				}
+			}
+		}
+		if e.Type == "ItemFinished" || e.Type == "RemoteChangeDetected" {
+			var d struct {
+				Item string `json:"item"`
+				Path string `json:"path"`
+			}
+			if json.Unmarshal(e.Data, &d) == nil && (d.Item == team.ModeFile || d.Path == team.ModeFile) {
+				s.syncModesSoon(ctx)
+			}
+			if e.Type == "ItemFinished" {
+				return
 			}
 		}
 		if e.Type == "DeviceConnected" || e.Type == "DeviceDisconnected" {

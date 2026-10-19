@@ -27,3 +27,22 @@ func TestTranslate(t *testing.T) {
 		t.Fatalf("%+v", u)
 	}
 }
+
+func TestTranslateRemoteDelete(t *testing.T) {
+	e := stclient.Event{Type: "RemoteChangeDetected", Data: []byte(`{"action":"deleted","type":"file","path":"a/b.md","folderID":"f1","modifiedBy":"ABCDEFG"}`)}
+	u, ok := Translate(e, func(id string) string {
+		if id == "ABCDEFG" {
+			return "李四"
+		}
+		return id
+	})
+	if !ok || u.Message != "成员 李四 删除了 a/b.md" {
+		t.Fatalf("%v %q", ok, u.Message)
+	}
+	if d := activityData(u); d["folderID"] != "f1" || d["path"] != "a/b.md" || d["action"] != "deleted" {
+		t.Fatalf("%v", d)
+	}
+	if _, ok := Translate(stclient.Event{Type: "RemoteChangeDetected", Data: []byte(`{"action":"modified","path":".teamsync.json"}`)}, func(s string) string { return s }); ok {
+		t.Fatal("模式文件不应出现在动态中")
+	}
+}

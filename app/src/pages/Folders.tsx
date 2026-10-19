@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { AlertTriangle, Check, FolderInput, FolderMinus, MoreHorizontal, Trash2, FolderOpen, FolderPlus, FolderSync, History, Mail, Pause, Play, RefreshCw, Send, UserCog, Users, Wrench, X } from "lucide-react";
+import { AlertTriangle, Check, Eye, Info, Lock, ShieldCheck, Settings2, Undo2, Upload, FolderInput, FolderMinus, MoreHorizontal, Trash2, FolderOpen, FolderPlus, FolderSync, History, Mail, Pause, Play, RefreshCw, Send, UserCog, Users, Wrench, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,6 +11,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Switch } from "@/components/ui/switch";
+import { VersionsDialog } from "@/components/VersionsDialog";
 import { Avatar, Dot, Empty, PageHeader } from "@/components/common";
 import { api, ApiError, formatBytes, isTauri, short, STATE_CN, type Device, type Folder, type FolderMember, type Invitation, type PathInfo } from "@/lib/api";
 import { useData } from "@/lib/store";
@@ -59,13 +61,89 @@ function MemberPicker({ members, selected, onChange }: { members: Device[]; sele
   );
 }
 
+/** 在资源管理器中打开文件夹；文件夹不存在时中文提示 */
+async function openFolder(f: Folder) {
+  try {
+    const info = await checkPath(f.path, f.id);
+    if (!info.exists) { toast.error("文件夹不存在", { description: `${f.path}\n可能已被移动、改名或删除，或所在磁盘未连接。` }); return; }
+    if (!isTauri()) { toast.info(f.path); return; }
+    const m = await import("@tauri-apps/plugin-opener");
+    await m.openPath(f.path);
+  } catch (e) { toast.error("无法打开文件夹", { description: (e as Error).message ?? String(e) }); }
+}
+
+type Mode = "collab" | "readonly";
+/** 共享模式选择：协作（大家都能修改）/ 只读共享（只有我能修改） */
+function ModePicker({ value, onChange, disabled }: { value: Mode; onChange: (m: Mode) => void; disabled?: boolean }) {
+  const opts: { v: Mode; icon: React.ReactNode; title: string; desc: string }[] = [
+    { v: "collab", icon: <Users className="size-4" />, title: "协作", desc: "所有成员都可以修改，改动互相同步" },
+    { v: "readonly", icon: <Lock className="size-4" />, title: "只读共享", desc: "只有你的修改会同步；成员在本机的改动不会同步出去" },
+  ];
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      {opts.map((o) => (
+        <button key={o.v} type="button" disabled={disabled} onClick={() => onChange(o.v)}
+          className={cn("flex items-start gap-2.5 rounded-lg border p-3 text-left transition-colors hover:bg-muted/50 disabled:cursor-not-allowed disabled:opacity-60",
+            value === o.v && "border-primary ring-2 ring-primary/15")}>
+          <span className="mt-0.5 text-muted-foreground">{o.icon}</span>
+          <span><span className="block text-sm font-medium">{o.title}</span><span className="mt-0.5 block text-xs text-muted-foreground">{o.desc}</span></span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ProtectRow({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <div className="flex items-center gap-3 rounded-lg border p-3">
+      <ShieldCheck className="size-4 text-emerald-600" />
+      <div className="flex-1"><div className="text-sm font-medium">删除保护</div><div className="text-xs text-muted-foreground">文件被成员删除或覆盖时，在本机保留旧版本（每个文件 10 份、30 天），可一键恢复</div></div>
+      <Switch checked={checked} onCheckedChange={onChange} />
+    </div>
+  );
+}
+
+/** 文件夹设置：共享模式（仅共享者可改）与删除保护 */
+function FolderSettingsDialog({ folder, onClose }: { folder: Folder | null; onClose: () => void }) {
+  const { run } = useData();
+  const [mode, setMode] = useState<Mode>("collab");
+  const [protect, setProtect] = useState(true);
+  useEffect(() => { if (folder) { setMode(folder.mode); setProtect(folder.deleteProtection); } }, [folder]);
+  const member = folder?.role === "member";
+  const save = async () => {
+    if (!folder) return;
+    const tasks: (() => Promise<unknown>)[] = [];
+    if (mode !== folder.mode) tasks.push(() => api("PUT", `/api/folders/${folder.id}/mode`, { mode }));
+    if (protect !== folder.deleteProtection) tasks.push(() => api("PUT", `/api/folders/${folder.id}/delete-protection`, { enabled: protect }));
+    if (await run(async () => { for (const t of tasks) await t(); }, "已保存文件夹设置")) onClose();
+  };
+  return (
+    <Dialog open={!!folder} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>「{folder?.label}」的设置</DialogTitle>
+          <DialogDescription>{member ? "这是同事共享给你的只读文件夹，共享模式由共享者决定。" : "切换共享模式后，已加入的成员会自动跟随，无需重新邀请。"}</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2"><Label>共享模式</Label><ModePicker value={mode} onChange={setMode} disabled={member} /></div>
+        <ProtectRow checked={protect} onChange={setProtect} />
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>取消</Button>
+          <Button onClick={save} disabled={!folder || (mode === folder.mode && protect === folder.deleteProtection)}><Check />保存</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function AddFolderDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const { run, devices, settings } = useData();
   const members = devices.filter((d) => !d.self);
   const [label, setLabel] = useState("");
   const [path, setPath] = useState("");
   const [sel, setSel] = useState<string[]>([]);
-  useEffect(() => { if (open) { setSel(members.map((m) => m.deviceID)); setLabel(""); setPath(""); } }, [open]); // 默认全选
+  const [mode, setMode] = useState<Mode>("collab");
+  const [protect, setProtect] = useState(true);
+  useEffect(() => { if (open) { setSel(members.map((m) => m.deviceID)); setLabel(""); setPath(""); setMode("collab"); setProtect(true); } }, [open]); // 默认全选
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
@@ -75,7 +153,7 @@ function AddFolderDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
         </DialogHeader>
         <form id="add-folder" className="space-y-4" onSubmit={async (e) => {
           e.preventDefault();
-          if (await run(() => api("POST", "/api/folders", { label, path, members: sel }), sel.length ? `已创建「${label}」，已邀请 ${sel.length} 位成员` : `已创建「${label}」`)) onOpenChange(false);
+          if (await run(() => api("POST", "/api/folders", { label, path, members: sel, mode, deleteProtection: protect }), sel.length ? `已创建「${label}」，已邀请 ${sel.length} 位成员` : `已创建「${label}」`)) onOpenChange(false);
         }}>
           <div className="space-y-2"><Label>名称</Label><Input value={label} onChange={(e) => { setLabel(e.target.value); }} placeholder="例如：设计文档" required autoFocus /></div>
           <div className="space-y-2"><Label>本地路径</Label>
@@ -84,7 +162,9 @@ function AddFolderDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
               <button type="button" className="text-xs text-sky-600 hover:underline" onClick={() => setPath(`${settings.defaultBaseDir}${settings.defaultBaseDir.includes("\\") ? "\\" : "/"}${label}`)}>使用默认目录</button>
             )}
           </div>
+          <div className="space-y-2"><Label>共享模式</Label><ModePicker value={mode} onChange={setMode} /></div>
           <div className="space-y-2"><Label>邀请成员</Label><MemberPicker members={members} selected={sel} onChange={setSel} /></div>
+          <ProtectRow checked={protect} onChange={setProtect} />
         </form>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>取消</Button>
@@ -145,6 +225,9 @@ function AcceptDialog({ inv, onClose }: { inv: Invitation | null; onClose: () =>
           <DialogTitle>加入「{inv?.label}」</DialogTitle>
           <DialogDescription>{inv?.deviceName || short(inv?.deviceID)} 邀请你加入这个团队文件夹。每个团队文件夹需要单独的位置，默认放在“接收文件夹的默认位置”下以文件夹名命名的子文件夹中。</DialogDescription>
         </DialogHeader>
+        {inv?.mode === "readonly" && (
+          <p className="flex gap-1.5 rounded-md border border-sky-500/30 bg-sky-500/5 p-2.5 text-xs text-sky-800 dark:text-sky-300"><Eye className="mt-0.5 size-3.5 shrink-0" />这是<b>只读共享</b>：你会收到共享者的最新文件，但你在本机的修改不会同步给其他人。</p>
+        )}
         <div className="space-y-2"><Label>保存位置</Label><PathField value={path} onChange={change} /></div>
         {error ? (
           <p className="flex gap-1.5 rounded-md border border-red-500/30 bg-red-500/5 p-2.5 text-xs text-red-700 dark:text-red-400" data-testid="path-error"><AlertTriangle className="mt-0.5 size-3.5 shrink-0" />{error}</p>
@@ -224,6 +307,28 @@ function RemoveDialog({ folder, onClose }: { folder: Folder | null; onClose: () 
       </DialogContent>
     </Dialog>
   );
+}
+
+/** 只读共享：成员一侧显示本机改动并可恢复为共享版本；共享者一侧在成员有不同版本时可“以我的版本为准” */
+function ReadOnlyBar({ folder }: { folder: Folder }) {
+  const { run } = useData();
+  if (folder.mode !== "readonly" || folder.paused) return null;
+  const changed = folder.status?.receiveOnlyChangedFiles ?? 0;
+  if (folder.role === "member" && changed > 0) return (
+    <div className="mt-3 flex items-center gap-2 rounded-lg border border-amber-400/40 bg-amber-500/10 p-2.5 text-xs text-amber-800 dark:text-amber-300" data-testid="readonly-local-changes">
+      <AlertTriangle className="size-4 shrink-0" />
+      <span className="flex-1">本机有 <b>{changed}</b> 个文件与共享版本不同（只读文件夹中的修改不会同步给其他人）。</span>
+      <Button size="sm" variant="outline" className="h-7" onClick={() => run(() => api("POST", `/api/folders/${folder.id}/revert`), "已恢复为共享版本")}><Undo2 />恢复为共享版本</Button>
+    </div>
+  );
+  if (folder.role === "owner" && (folder.status?.needFiles ?? 0) > 0) return (
+    <div className="mt-3 flex items-center gap-2 rounded-lg border border-sky-500/30 bg-sky-500/5 p-2.5 text-xs text-sky-800 dark:text-sky-300">
+      <Info className="size-4 shrink-0" />
+      <span className="flex-1">有 {folder.status!.needFiles} 个文件在其他成员处版本不同（只读共享不会采用他们的改动）。</span>
+      <Button size="sm" variant="outline" className="h-7" onClick={() => run(() => api("POST", `/api/folders/${folder.id}/override`), "已以你的版本为准")}><Upload />以我的版本为准</Button>
+    </div>
+  );
+  return null;
 }
 
 /** 文件夹故障（.stfolder 丢失 / 路径丢失）提示与修复 */
@@ -316,6 +421,8 @@ export default function Folders() {
   const [accepting, setAccepting] = useState<Invitation | null>(null);
   const [editing, setEditing] = useState<Folder | null>(null);
   const [removing, setRemoving] = useState<Folder | null>(null);
+  const [settingsOf, setSettings] = useState<Folder | null>(null);
+  const [versionsOf, setVersions] = useState<Folder | null>(null);
 
   return (
     <>
@@ -363,9 +470,16 @@ export default function Folders() {
                       <div className="flex items-center gap-2">
                         <span className="font-medium">{f.label || f.id}</span>
                         <Badge variant="outline" className="gap-1.5"><Dot tone={tone} pulse={tone === "amber"} />{f.problem ? (f.problem.kind === "overlap" ? "位置重叠" : f.problem.kind === "pathMissing" ? "路径丢失" : f.problem.kind === "markerMissing" ? "需要修复" : "出错") : STATE_CN[st] ?? st}</Badge>
+                        {f.mode === "readonly" && (
+                          <Tooltip><TooltipTrigger asChild>
+                            <Badge variant="outline" className="gap-1 border-sky-500/40 text-sky-700 dark:text-sky-300" data-testid="readonly-badge"><Lock className="size-3" />只读</Badge>
+                          </TooltipTrigger><TooltipContent>{f.role === "owner" ? "只读共享：只有你的修改会同步给成员" : "只读共享：本机的修改不会同步给其他人"}</TooltipContent></Tooltip>
+                        )}
                         {f.conflicts > 0 && <Badge className="bg-red-500 text-white">{f.conflicts} 个冲突</Badge>}
                       </div>
-                      <div className="mt-0.5 truncate font-mono text-xs text-muted-foreground">{f.path}</div>
+                      <Tooltip><TooltipTrigger asChild>
+                        <button className="mt-0.5 block max-w-full truncate text-left font-mono text-xs text-muted-foreground hover:text-foreground hover:underline" onClick={() => openFolder(f)} data-testid="folder-path">{f.path}</button>
+                      </TooltipTrigger><TooltipContent>在资源管理器中打开</TooltipContent></Tooltip>
                       <div className="mt-3 flex items-center gap-3">
                         <Progress value={pct} className={`h-1.5 flex-1 ${pct === 100 ? "[&_[data-slot=progress-indicator]]:bg-emerald-500" : "[&_[data-slot=progress-indicator]]:bg-sky-500"}`} />
                         <span className="w-10 text-right text-xs tabular-nums text-muted-foreground">{pct}%</span>
@@ -373,7 +487,9 @@ export default function Folders() {
                       <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
                         <span>{f.status?.localFiles ?? 0} 个文件 · {formatBytes(f.status?.globalBytes)}</span>
                         {f.status?.needFiles ? <span className="text-amber-600">还差 {f.status.needFiles} 个文件</span> : null}
-                        {f.versioning?.type && <span className="flex items-center gap-1"><History className="size-3" />历史版本 保留 {f.versioning.params?.keep ?? "-"} 份</span>}
+                        {f.versioning?.type
+                          ? <button className="flex items-center gap-1 hover:text-foreground hover:underline" onClick={() => setVersions(f)}><History className="size-3" />历史版本 保留 {f.versioning.params?.keep ?? "-"} 份</button>
+                          : <span className="flex items-center gap-1 text-amber-600"><ShieldCheck className="size-3" />未开启删除保护</span>}
                         {f.fsWatcherEnabled && <span>实时监视</span>}
                       </div>
                       <div className="mt-3 flex flex-wrap items-center gap-1.5">
@@ -381,6 +497,7 @@ export default function Folders() {
                         {f.members.length === 0 && <span className="text-xs text-muted-foreground">仅本机，未共享给成员</span>}
                         {f.members.map((m) => <MemberChip key={m.deviceID} folder={f} m={m} />)}
                       </div>
+                      <ReadOnlyBar folder={f} />
                       {f.problem && <ProblemBanner folder={f} onRemove={() => setRemoving(f)} />}
                     </div>
                     <div className="flex shrink-0 gap-1">
@@ -395,8 +512,12 @@ export default function Folders() {
                       </TooltipTrigger><TooltipContent>{f.paused ? "恢复同步" : "暂停同步"}</TooltipContent></Tooltip>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal /></Button></DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-40">
+                        <DropdownMenuContent align="end" className="w-44">
+                          <DropdownMenuItem onClick={() => openFolder(f)}><FolderOpen />打开文件夹</DropdownMenuItem>
+                          <DropdownMenuSeparator />
                           <DropdownMenuItem onClick={() => setEditing(f)}><UserCog />管理成员</DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => setSettings(f)}><Settings2 />共享设置</DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => setVersions(f)}><History />历史版本</DropdownMenuItem>
                           <DropdownMenuItem onClick={() => run(() => api("POST", `/api/folders/${f.id}/scan`), "已开始扫描")}><RefreshCw />立即扫描</DropdownMenuItem>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem variant="destructive" onClick={() => setRemoving(f)}><FolderMinus />移除…</DropdownMenuItem>
@@ -414,6 +535,8 @@ export default function Folders() {
       <AcceptDialog inv={accepting} onClose={() => setAccepting(null)} />
       <MembersDialog folder={editing} onClose={() => setEditing(null)} />
       <RemoveDialog folder={removing} onClose={() => setRemoving(null)} />
+      <FolderSettingsDialog folder={settingsOf} onClose={() => setSettings(null)} />
+      <VersionsDialog folder={versionsOf} onClose={() => setVersions(null)} />
     </>
   );
 }

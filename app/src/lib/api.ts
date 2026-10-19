@@ -5,24 +5,28 @@ export interface Status {
   engine: string; myID?: string; uptime?: number; syncthingVersion?: string;
   connected?: number; folders?: number; syncing?: boolean; error?: string;
 }
-export interface FolderStatus { state: string; globalFiles: number; localFiles: number; needFiles: number; needBytes: number; globalBytes: number; errors: number; error?: string }
+export interface FolderStatus { state: string; globalFiles: number; localFiles: number; needFiles: number; needBytes: number; globalBytes: number; errors: number; error?: string; receiveOnlyChangedFiles?: number }
 export interface Folder {
   id: string; label: string; path: string; type: string; paused: boolean;
   devices: { deviceID: string }[]; fsWatcherEnabled: boolean;
   versioning: { type: string; params: Record<string, string> };
   status?: FolderStatus; conflicts: number; members: FolderMember[];
   problem?: FolderProblem;
+  /** 共享模式：collab 协作 / readonly 只读共享；role：只读时本机为共享者 owner 或成员 member */
+  mode: "collab" | "readonly"; role?: "owner" | "member"; deleteProtection: boolean;
 }
 export interface PathInfo { ok: boolean; error?: string; exists: boolean; empty: boolean; entries: number }
 export interface FolderProblem { kind: "markerMissing" | "pathMissing" | "overlap" | "other"; message: string; pathExists: boolean; pathEmpty: boolean; inGitRepo: boolean }
 export interface FolderMember { deviceID: string; name: string; connected: boolean; remoteState: "valid" | "notSharing" | "paused" | "unknown"; completion: number }
-export interface Invitation { folderID: string; label: string; deviceID: string; deviceName: string; time: string; offerTime: string; suggestPath: string }
+export interface Invitation { folderID: string; label: string; deviceID: string; deviceName: string; time: string; offerTime: string; suggestPath: string; mode?: "collab" | "readonly" }
 export interface Settings { defaultBaseDir: string; ignoredCount: number; presenceNotify?: boolean }
 export interface Device { deviceID: string; name: string; connected: boolean; address?: string; self: boolean; paused: boolean; remark?: boolean; announcedName?: string }
 export interface Nearby { deviceID: string; addresses: string[]; name?: string; pending: boolean }
 export interface Conflict { path: string; original: string; time: string; device: string; folderID: string; folderLabel: string }
 export interface UIEvent { type: string; message?: string; notify: boolean; time: string; data?: unknown; key?: string; activityId?: number }
-export interface ActivityItem { id: number; message: string; time: string; type: string; key?: string }
+export interface ActivityItem { id: number; message: string; time: string; type: string; key?: string; data?: Record<string, string> }
+export interface FileVersion { versionTime: string; modTime: string; size: number; file?: string }
+export interface VersionedFile { path: string; deleted: boolean; latest: string; versions: FileVersion[] }
 
 let core: CoreInfo | null = null;
 

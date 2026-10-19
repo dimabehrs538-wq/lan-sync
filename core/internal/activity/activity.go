@@ -22,6 +22,8 @@ type Item struct {
 	// Key 非空时，同 Key 且在 MergeWithin 内的记录原地更新（例如同一成员反复断线合并为一条）
 	Key   string `json:"key,omitempty"`
 	Count int    `json:"count,omitempty"`
+	// Data 附加信息，例如删除记录的 folder/path，用于“一键恢复”
+	Data map[string]string `json:"data,omitempty"`
 }
 
 type Log struct {

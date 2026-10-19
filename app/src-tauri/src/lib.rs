@@ -128,6 +128,7 @@ pub fn run() {
             child: Mutex::new(None),
         })
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![core_info, set_tray_status, stop_core])
         .setup(move |app| {
             #[cfg(desktop)]

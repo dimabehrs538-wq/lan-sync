@@ -55,7 +55,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
         const e: UIEvent = JSON.parse(m.data);
         if (e.message) {
           // 内核为每条动态分配 activityId；同 ID（例如“连接不稳定”合并记录）原地更新并置顶
-          const item: Activity = { id: e.activityId ?? -(++seq.current), message: e.message!, time: e.time, type: e.type, key: e.key };
+          const d = e.type === "RemoteChangeDetected" ? (e.data as Record<string, string> | undefined) : undefined;
+          const data = d ? { folderID: d.folderID, path: d.path, action: d.action, type: d.type } : undefined;
+          const item: Activity = { id: e.activityId ?? -(++seq.current), message: e.message!, time: e.time, type: e.type, key: e.key, data };
           setActivity((a) => [item, ...a.filter((x) => x.id !== item.id)].slice(0, MAX_ACTIVITY));
           if (e.notify) { notify(e.message); toast(e.message); }
         }

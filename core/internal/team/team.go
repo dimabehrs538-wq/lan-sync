@@ -63,11 +63,7 @@ func NewTeamFolder(label, path string, deviceIDs []string) stclient.Folder {
 		RescanIntervalS:  3600,
 		FSWatcherEnabled: true,
 		FSWatcherDelayS:  2,
-		Versioning: stclient.Versioning{
-			Type:             "simple",
-			Params:           map[string]string{"keep": "10", "cleanoutDays": "30"},
-			CleanupIntervalS: 3600,
-		},
+		Versioning:       DefaultVersioning(),
 	}
 	for _, d := range uniq(deviceIDs) {
 		f.Devices = append(f.Devices, stclient.FolderDevice{DeviceID: d})

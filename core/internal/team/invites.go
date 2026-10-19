@@ -135,6 +135,7 @@ type Invitation struct {
 	Time        time.Time `json:"time"`
 	OfferTime   string    `json:"offerTime"`
 	SuggestPath string    `json:"suggestPath"`
+	Mode        string    `json:"mode"` // collab | readonly（只读共享：接受后为仅接收）
 }
 
 // FilterInvitations 把 Syncthing 的待处理文件夹转成邀请列表，去掉已忽略的和本机已有的文件夹。
@@ -149,13 +150,17 @@ func FilterInvitations(pending map[string]stclient.PendingFolder, have map[strin
 			if st.IsIgnored(fid, dev) {
 				continue
 			}
-			label := o.Label
+			label, ro := ParseLabel(o.Label)
 			if label == "" {
 				label = fid
 			}
+			mode := ModeCollab
+			if ro {
+				mode = ModeReadOnly
+			}
 			t, _ := time.Parse(time.RFC3339Nano, o.Time)
 			out = append(out, Invitation{FolderID: fid, Label: label, DeviceID: dev, DeviceName: names[dev], Time: t, OfferTime: o.Time,
-				SuggestPath: SuggestPath(base, label, existing)})
+				SuggestPath: SuggestPath(base, label, existing), Mode: mode})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Time.After(out[j].Time) })

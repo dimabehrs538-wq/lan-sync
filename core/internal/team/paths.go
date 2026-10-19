@@ -117,8 +117,8 @@ func (e *pathError) Error() string { return e.msg }
 func (e *pathError) Unwrap() error { return ErrPathNotAllowed }
 
 func folderName(f stclient.Folder) string {
-	if f.Label != "" {
-		return f.Label
+	if n, _ := ParseLabel(f.Label); n != "" {
+		return n
 	}
 	return f.ID
 }

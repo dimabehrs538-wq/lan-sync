@@ -33,11 +33,17 @@ const usage = `teamsyncd - 内网团队文件夹同步内核
   teamsyncd serve [--home DIR] [--syncthing PATH] [--api-port N] [--token T] [--folders-dir DIR] [--listen ADDR] [--exit-on-stdin-close]
   teamsyncd status                     查看状态和本机设备 ID
   teamsyncd folders                    列出团队文件夹
-  teamsyncd add-folder <名称> <路径> [设备ID...]  创建团队文件夹并共享给指定成员（不指定=全部成员）
+  teamsyncd add-folder <名称> <路径> [设备ID...] [--readonly] [--no-delete-protection]  创建团队文件夹并共享给指定成员（不指定=全部成员）
   teamsyncd share <文件夹ID> [设备ID...]          设置文件夹共享成员
   teamsyncd remove-folder <文件夹ID> [--delete-files] [--permanent]  仅在本机移除文件夹（可同时删除本地文件，默认进回收站）
   teamsyncd reinvite <文件夹ID> <设备ID>          重新邀请成员
   teamsyncd invites                               查看收到的文件夹邀请
+  teamsyncd set-mode <文件夹ID> collab|readonly     切换共享模式（协作 / 只读共享，仅共享者）
+  teamsyncd delete-protection <文件夹ID> on|off    删除保护（保留被删除/覆盖的历史版本）
+  teamsyncd revert <文件夹ID>                      只读文件夹：放弃本机改动，恢复为共享版本
+  teamsyncd override <文件夹ID>                    只读共享者：以本机版本为准覆盖成员
+  teamsyncd versions <文件夹ID>                    查看历史版本
+  teamsyncd restore <文件夹ID> <相对路径> [版本时间] 恢复历史版本（默认最近一个）
   teamsyncd pause|resume <文件夹ID>                暂停/恢复文件夹同步
   teamsyncd check-path <路径> [文件夹ID]               检查位置是否可用（不能与已有文件夹相同/嵌套）
   teamsyncd activity                              查看最近动态（最多 500 条 / 7 天）
@@ -203,7 +209,7 @@ func serve(args []string) {
 		srv.Publish(api.UIEvent{Type: "EngineState", Time: time.Now(), Data: map[string]string{"state": string(s)}})
 	}
 	go srv.RunEventBridge(ctx)
-	go srv.RunOverlapGuard(ctx, time.Minute)
+	go srv.RunOverlapGuard(ctx, api.GuardInterval())
 	hs := &http.Server{Handler: srv.Handler()}
 	go hs.Serve(ln)
 
@@ -274,11 +280,24 @@ func runCLI(cmd string, args []string, home string) error {
 	case "folders":
 		return call("GET", "/api/folders", nil)
 	case "add-folder":
+		var pos []string
+		body := map[string]any{}
+		for _, a := range args {
+			switch a {
+			case "--readonly":
+				body["mode"] = "readonly"
+			case "--no-delete-protection":
+				body["deleteProtection"] = false
+			default:
+				pos = append(pos, a)
+			}
+		}
+		args = pos
 		if err := need(2); err != nil {
 			return err
 		}
 		p, _ := filepath.Abs(args[1])
-		body := map[string]any{"label": args[0], "path": p}
+		body["label"], body["path"] = args[0], p
 		if len(args) > 2 {
 			body["members"] = args[2:]
 		}
@@ -316,6 +335,35 @@ func runCLI(cmd string, args []string, home string) error {
 		return call("POST", "/api/folders/"+args[0]+"/reinvite", map[string]string{"deviceID": args[1]})
 	case "invites":
 		return call("GET", "/api/invitations", nil)
+	case "set-mode":
+		if err := need(2); err != nil {
+			return err
+		}
+		return call("PUT", "/api/folders/"+args[0]+"/mode", map[string]string{"mode": args[1]})
+	case "delete-protection":
+		if err := need(2); err != nil {
+			return err
+		}
+		return call("PUT", "/api/folders/"+args[0]+"/delete-protection", map[string]bool{"enabled": args[1] == "on"})
+	case "revert", "override":
+		if err := need(1); err != nil {
+			return err
+		}
+		return call("POST", "/api/folders/"+args[0]+"/"+cmd, nil)
+	case "versions":
+		if err := need(1); err != nil {
+			return err
+		}
+		return call("GET", "/api/folders/"+args[0]+"/versions", nil)
+	case "restore":
+		if err := need(2); err != nil {
+			return err
+		}
+		body := map[string]string{"path": args[1]}
+		if len(args) > 2 {
+			body["versionTime"] = args[2]
+		}
+		return call("POST", "/api/folders/"+args[0]+"/versions/restore", body)
 	case "pause", "resume":
 		if err := need(1); err != nil {
 			return err
