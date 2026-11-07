@@ -7,6 +7,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Progress } from "@/components/ui/progress";
 import { isTauri } from "./api";
 import type { Update } from "@tauri-apps/plugin-updater";
+import { isAndroid, isMobile, openURL } from "./platform";
+import { compareVersions, fetchLatest, type MobileRelease } from "./release";
 
 const CHECK_INTERVAL = 4 * 60 * 60 * 1000; // 每 4 小时
 const FIRST_CHECK_DELAY = 15 * 1000;
@@ -23,12 +25,26 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
   const [phase, setPhase] = useState<"idle" | "downloading" | "stopping" | "installing">("idle");
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const dismissed = useRef<string | null>(null);
+  const [mobileUp, setMobileUp] = useState<MobileRelease | null>(null);
 
   useEffect(() => { if (isTauri()) import("@tauri-apps/api/app").then((m) => m.getVersion()).then(setVersion); }, []);
 
   const check = useCallback(async (manual: boolean) => {
     if (!isTauri()) { if (manual) toast.info("浏览器调试模式不支持更新"); return; }
     setChecking(true);
+    if (isMobile) {
+      // 手机：没有签名更新通道（Android 需系统安装器确认，iOS 需自行重签），只检查新版本并提供下载链接
+      try {
+        const { getVersion } = await import("@tauri-apps/api/app");
+        const cur = await getVersion();
+        const r = await fetchLatest(isAndroid ? "android" : "ios");
+        if (r && compareVersions(r.version, cur) > 0) { if (manual || dismissed.current !== r.version) setMobileUp(r); }
+        else if (manual) toast.success("已是最新版本");
+      } catch (e) {
+        if (manual) toast.error("检查更新失败", { description: "无法连接 GitHub，请检查网络后重试。" + (e ? `（${String(e).slice(0, 80)}）` : "") });
+      } finally { setChecking(false); }
+      return;
+    }
     try {
       const { check } = await import("@tauri-apps/plugin-updater");
       const u = await check();
@@ -76,6 +92,25 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
     <UpdaterCtx.Provider value={{ version, checking, autoCheck, checkNow: () => check(true),
       setAutoCheck: (v) => { setAuto(v); localStorage.setItem("autoUpdate", v ? "1" : "0"); } }}>
       {children}
+      <Dialog open={!!mobileUp} onOpenChange={(v) => { if (!v) { dismissed.current = mobileUp?.version ?? null; setMobileUp(null); } }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Sparkles className="size-5 text-sky-500" />发现新版本 {mobileUp?.version}</DialogTitle>
+            <DialogDescription>
+              当前版本 {version}。{isAndroid
+                ? "点“下载安装包”后用浏览器下载 APK，再由系统安装器确认安装（覆盖安装，数据保留；签名不一致时系统会拒绝）。"
+                : "iOS 安装包未签名，需要用你自己的 Apple ID / 证书重新签名后安装（例如 AltStore、Sideloadly 或 Xcode），详见发布页说明。"}
+            </DialogDescription>
+          </DialogHeader>
+          {mobileUp?.notes && <div className="max-h-56 overflow-y-auto rounded-lg border bg-muted/40 p-3 text-sm whitespace-pre-wrap">{mobileUp.notes}</div>}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { dismissed.current = mobileUp?.version ?? null; setMobileUp(null); }}>稍后</Button>
+            <Button onClick={() => { const u = mobileUp; if (u) void openURL(isAndroid && u.asset ? u.asset.url : u.page); setMobileUp(null); }}>
+              <Download />{isAndroid && mobileUp?.asset ? "下载安装包" : "打开发布页"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog open={!!update} onOpenChange={(v) => { if (!v && !busy) { dismissed.current = update?.version ?? null; setUpdate(null); } }}>
         <DialogContent className="sm:max-w-md" showCloseButton={!busy}>
           <DialogHeader>

@@ -8,3 +8,5 @@ node_modules/
 app/dist/
 app/src-tauri/target/
 app/src-tauri/gen/schemas/
+app/src-tauri/mobile-libs/
+app/src-tauri/gen/apple/

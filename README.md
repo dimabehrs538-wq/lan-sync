@@ -1,6 +1,6 @@
 # TeamSync 团队同步（内网 P2P 文件夹同步）
 
-面向小团队的**纯内网、无服务器**文件夹同步桌面工具：每人电脑装一个，团队文件夹里有人新增或修改文档，其他在线成员自动拉取。
+面向小团队的**纯内网、无服务器**文件夹同步工具（Windows 桌面 + Android + iOS）：每人电脑或手机装一个，团队文件夹里有人新增或修改文档，其他在线成员自动拉取。
 
 - 同步引擎：内嵌官方 [Syncthing](https://syncthing.net) v2.1.6（不自研同步协议），由 Go 内核通过 REST + 事件 API 控制（思路同 SyncTrayzor）
 - 内核：Go（`core/`，`teamsyncd`），作为 Tauri sidecar 运行，对前端暴露本地 HTTP API
@@ -34,6 +34,19 @@
 | 打开文件夹 | 卡片"…"菜单第一项"打开文件夹"，或直接点击路径，在资源管理器中打开；文件夹不存在时给出提示 |
 | 冲突中心 | 扫描 `*.sync-conflict-*` 副本，选择保留原文件或冲突版本 |
 | 托盘/自启 | 关闭窗口最小化到托盘；单实例；开机自启（`--minimized` 只驻留托盘） |
+
+## Android / iOS（0.4.0 起）
+
+手机端与桌面使用同一界面和同一内核 API，内嵌同版本 Syncthing，与桌面直接互通。详见 [docs/mobile.md](docs/mobile.md)。
+
+- **Android**：Release 中的 `*_android_arm64.apk` 已签名，可直接安装；局域网自动发现可用；可选"后台同步"（前台服务，系统仍可能结束它，Android 15 起每天最多约 6 小时）。
+- **iOS**：Release 中的 `*_ios_arm64_unsigned.ipa` **未签名**，需自行重签（AltStore / SideStore / 自有开发者证书）才能安装，未上架 App Store；只在前台同步；需要手动输入对方 IP 配对（无局域网广播发现）。
+- 手机没有回收站，"删除本地文件"为永久删除。
+- 测试：`scripts/e2e-mobile-desktop.sh`（桌面 ↔ 移动端内核）、`MOBILE_NODES="B C" scripts/e2e-two-nodes.sh`；尚未真机测试。
+
+| 文件夹 | 浏览 / 导入 | 设置 |
+|---|---|---|
+| ![](docs/screenshot-mobile-folders.png) | ![](docs/screenshot-mobile-files.png) | ![](docs/screenshot-mobile-settings.png) |
 
 ## 目录结构
 
@@ -91,11 +104,15 @@ TeamSync 使用 `tauri-plugin-updater` 从 GitHub Releases 自动更新：启动
    git tag -a v0.2.1 -m "修复了……"
    git push origin v0.2.1
    ```
-4. Actions 会构建签名的 NSIS/MSI，生成 `latest.json`，并创建 Release（附安装包、`.sig` 签名和 `latest.json`）。已安装的旧版本随后会提示更新。
+4. 另外需要新增 `docs/releases/<标签>.md` 作为 Release 页面说明；
+5. 标签触发 `.github/workflows/release.yml`：并行构建 Windows（签名的 NSIS/MSI + `latest.json`）、Android（签名 APK/AAB）、iOS（未签名 IPA），全部成功后统一创建一个 Release（附 `SHA256SUMS.txt`）；同名 Release 已存在时失败而不会覆盖。已安装的旧版本随后会提示更新。
 
 签名密钥：更新包用 `npx tauri signer generate` 生成的密钥签名，公钥写在 `tauri.conf.json` 的 `plugins.updater.pubkey`，
 私钥及其密码保存在仓库 Secrets `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`（另有离线备份，切勿提交到仓库）。
 **私钥丢失后已安装的客户端将无法再自动更新**，只能手动重装。
+
+Android 发布证书：项目专用 keystore（与其他项目无关），保存在仓库 Secrets `ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD`（另有离线备份，切勿提交）。
+证书 SHA-256：`EC:27:69:A3:3F:44:A8:E1:F5:9A:14:77:C7:1E:7E:16:0F:26:DE:5C:D2:64:ED:E6:ED:ED:AA:01:FB:16:D6:26`。换证书会导致无法覆盖升级。
 
 ## Windows 构建（主平台）
 

@@ -1,0 +1,82 @@
+name: 构建 iOS 安装包（未签名 IPA）
+
+# 没有 Apple 分发证书：生成未签名 IPA，需要用户自行重签（AltStore / SideStore / 自有开发者证书）后才能安装。
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: IPA（arm64，未签名）
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: core/mobile/go.mod
+          cache-dependency-path: core/mobile/go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri -> target
+          key: ios
+
+      - name: 编译移动端 Go 内核（libteamsynccore.a）
+        run: scripts/build-mobile-core.sh ios aarch64-apple-ios
+
+      - name: 安装前端依赖
+        working-directory: app
+        run: npm ci
+
+      - name: 生成 Xcode 工程并应用图标
+        working-directory: app
+        run: |
+          npx tauri ios init --ci
+          cp src-tauri/icons/ios/*.png src-tauri/gen/apple/Assets.xcassets/AppIcon.appiconset/
+
+      - name: 构建未签名 IPA
+        working-directory: app
+        run: npx tauri ios build --no-sign --target aarch64 --ci
+
+      - name: 校验并整理产物
+        run: |
+          set -euo pipefail
+          VER=$(node -p "require('./app/src-tauri/tauri.conf.json').version")
+          IPA=$(find app/src-tauri/gen/apple/build -name '*.ipa' | head -1)
+          [ -n "$IPA" ] || { echo "未找到 IPA"; exit 1; }
+          mkdir -p dist-ios && cp "$IPA" "dist-ios/TeamSync_${VER}_ios_arm64_unsigned.ipa"
+          cd dist-ios && rm -rf x && mkdir x && (cd x && unzip -q ../*.ipa)
+          APP=$(ls -d x/Payload/*.app); BIN="$APP/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Info.plist")"
+          lipo -info "$BIN"; lipo -info "$BIN" | grep -q arm64
+          for k in CFBundleIdentifier CFBundleShortVersionString CFBundleDisplayName NSLocalNetworkUsageDescription UIFileSharingEnabled MinimumOSVersion; do
+            echo "$k = $(/usr/libexec/PlistBuddy -c "Print :$k" "$APP/Info.plist")"
+          done
+          codesign -dv "$APP" 2>&1 | head -3 || true
+          rm -rf x && shasum -a 256 *.ipa
+
+      - name: 上传构件
+        uses: actions/upload-artifact@v4
+        with:
+          name: TeamSync-ios-arm64-unsigned
+          path: dist-ios/*.ipa
+          if-no-files-found: error

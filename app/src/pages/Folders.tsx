@@ -14,6 +14,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { VersionsDialog } from "@/components/VersionsDialog";
+import { FilesDialog } from "@/components/FilesDialog";
+import { isDesktop, isMobile } from "@/lib/platform";
 import { formatCap, RetentionDialog, retentionText } from "@/components/Retention";
 import { Avatar, Dot, Empty, PageHeader } from "@/components/common";
 import { api, ApiError, formatBytes, isTauri, short, STATE_CN, type Device, type Folder, type FolderMember, type Invitation, type PathInfo, type Retention } from "@/lib/api";
@@ -21,7 +23,7 @@ import { useData } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
 async function pickDir(defaultPath?: string): Promise<string | null> {
-  if (!isTauri()) return null;
+  if (!isDesktop) return null; // 手机没有目录选择器：直接输入路径（默认在 App 存储内）
   const { open } = await import("@tauri-apps/plugin-dialog");
   const p = await open({ directory: true, title: "选择文件夹", defaultPath });
   return typeof p === "string" ? p : null;
@@ -31,7 +33,7 @@ export function PathField({ value, onChange, placeholder }: { value: string; onC
   return (
     <div className="flex gap-2">
       <Input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="font-mono text-xs" />
-      {isTauri() && <Button type="button" variant="outline" onClick={async () => { const p = await pickDir(value || undefined); if (p) onChange(p); }}><FolderOpen />浏览</Button>}
+      {isDesktop && <Button type="button" variant="outline" onClick={async () => { const p = await pickDir(value || undefined); if (p) onChange(p); }}><FolderOpen />浏览</Button>}
     </div>
   );
 }
@@ -188,6 +190,9 @@ function AddFolderDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
   const [mode, setMode] = useState<Mode>("collab");
   const [protect, setProtect] = useState(true);
   useEffect(() => { if (open) { setSel(members.map((m) => m.deviceID)); setLabel(""); setPath(""); setMode("collab"); setProtect(true); } }, [open]); // 默认全选
+  const sep = settings?.defaultBaseDir?.includes("\\") ? "\\" : "/";
+  // 手机上没有目录选择器：未填写路径时默认放到“默认位置/名称”
+  const effPath = path || (isMobile && label && settings?.defaultBaseDir ? `${settings.defaultBaseDir}${sep}${label}` : "");
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
@@ -197,12 +202,13 @@ function AddFolderDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
         </DialogHeader>
         <form id="add-folder" className="space-y-4" onSubmit={async (e) => {
           e.preventDefault();
-          if (await run(() => api("POST", "/api/folders", { label, path, members: sel, mode, deleteProtection: protect }), sel.length ? `已创建「${label}」，已邀请 ${sel.length} 位成员` : `已创建「${label}」`)) onOpenChange(false);
+          if (await run(() => api("POST", "/api/folders", { label, path: effPath, members: sel, mode, deleteProtection: protect }), sel.length ? `已创建「${label}」，已邀请 ${sel.length} 位成员` : `已创建「${label}」`)) onOpenChange(false);
         }}>
           <div className="space-y-2"><Label>名称</Label><Input value={label} onChange={(e) => { setLabel(e.target.value); }} placeholder="例如：设计文档" required autoFocus /></div>
           <div className="space-y-2"><Label>本地路径</Label>
             <PathField value={path} onChange={setPath} placeholder={settings?.defaultBaseDir ? `${settings.defaultBaseDir}${settings.defaultBaseDir.includes("\\") ? "\\" : "/"}${label || "设计文档"}` : "例如：D:\\TeamSync\\设计文档"} />
-            {!path && label && settings?.defaultBaseDir && (
+            {isMobile && !path && effPath && <p className="text-xs text-muted-foreground">将保存到 <span className="font-mono break-all">{effPath}</span></p>}
+            {!isMobile && !path && label && settings?.defaultBaseDir && (
               <button type="button" className="text-xs text-sky-600 hover:underline" onClick={() => setPath(`${settings.defaultBaseDir}${settings.defaultBaseDir.includes("\\") ? "\\" : "/"}${label}`)}>使用默认目录</button>
             )}
           </div>
@@ -212,7 +218,7 @@ function AddFolderDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
         </form>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>取消</Button>
-          <Button type="submit" form="add-folder" disabled={!label || !path}><FolderPlus />创建</Button>
+          <Button type="submit" form="add-folder" disabled={!label || !effPath}><FolderPlus />创建</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -320,7 +326,7 @@ function RemoveDialog({ folder, onClose }: { folder: Folder | null; onClose: () 
         </DialogHeader>
         <div className="space-y-2">
           <Option v="keep" icon={<FolderMinus className="size-4" />} title="仅停止同步（保留本地文件）" desc={`本机不再同步，${folder?.path ?? ""} 中的文件原样保留。`} />
-          <Option v="delete" danger icon={<Trash2 className="size-4" />} title="同时删除本地文件" desc="停止同步并把本机的这个文件夹移到回收站。其他成员的文件不受影响。" />
+          <Option v="delete" danger icon={<Trash2 className="size-4" />} title="同时删除本地文件" desc={isMobile ? "停止同步并永久删除本机的这个文件夹（手机没有回收站，无法恢复）。其他成员的文件不受影响。" : "停止同步并把本机的这个文件夹移到回收站。其他成员的文件不受影响。"} />
         </div>
         {mode === "delete" && (
           <div className="space-y-3 rounded-lg border border-red-500/30 bg-red-500/5 p-3">
@@ -329,17 +335,17 @@ function RemoveDialog({ folder, onClose }: { folder: Folder | null; onClose: () 
               <Label className="text-xs">请输入文件夹名称 <b>{name}</b> 以确认</Label>
               <Input value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder={name} autoFocus />
             </div>
-            <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+            {!isMobile && <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
               <Checkbox checked={permanent} onCheckedChange={(v) => setPermanent(!!v)} />
               回收站不可用时直接永久删除（无法恢复）
-            </label>
+            </label>}
           </div>
         )}
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>取消</Button>
           <Button disabled={!ok} className={mode === "delete" ? "bg-red-600 text-white hover:bg-red-700" : ""} onClick={async () => {
             if (!folder) return;
-            const q = mode === "delete" ? `?deleteFiles=1${permanent ? "&permanent=1" : ""}` : "";
+            const q = mode === "delete" ? `?deleteFiles=1${permanent || isMobile ? "&permanent=1" : ""}` : "";
             let msg = "";
             const done = await run(async () => {
               const r = await api<{ filesDeleted: boolean; trashed: boolean }>("DELETE", `/api/folders/${folder.id}${q}`);
@@ -395,9 +401,12 @@ function ProblemBanner({ folder, onRemove }: { folder: Folder; onRemove: () => v
   };
   const [pendingPath, setPendingPath] = useState<{ path: string; entries: number } | null>(null);
   const doRelocate = (path: string) => run(() => api("POST", `/api/folders/${folder.id}/relocate`, { path }), `已将「${folder.label || folder.id}」指向新位置`).then(() => setPendingPath(null));
-  const relocate = async () => {
-    const path = await pickDir();
+  const [typing, setTyping] = useState<string | null>(null); // 手机：输入新位置
+  const relocate = async (typed?: string) => {
+    if (isMobile && typed === undefined) { setTyping(folder.path); return; }
+    const path = typed ?? await pickDir();
     if (!path) return;
+    setTyping(null);
     try {
       const info = await checkPath(path, folder.id);
       if (!info.ok) { toast.error("不能使用该位置", { description: info.error }); return; }
@@ -417,17 +426,23 @@ function ProblemBanner({ folder, onRemove }: { folder: Folder; onRemove: () => v
       {pendingPath && (
         <p className="mt-2 pl-6 font-medium text-amber-700 dark:text-amber-400">所选文件夹 <span className="font-mono">{pendingPath.path}</span> 不是空的（已有 {pendingPath.entries} 项），其中的文件会与其他成员互相同步。确定使用？</p>
       )}
+      {typing !== null && (
+        <div className="mt-2 space-y-2 pl-6">
+          <Input value={typing} onChange={(e) => setTyping(e.target.value)} className="font-mono text-xs" placeholder="新的文件夹位置" />
+          <div className="flex gap-2"><Button size="sm" disabled={!typing} onClick={() => relocate(typing)}>使用该位置</Button><Button size="sm" variant="outline" onClick={() => setTyping(null)}>取消</Button></div>
+        </div>
+      )}
       <div className="mt-2 flex flex-wrap gap-2 pl-6">
         {pendingPath && <><Button size="sm" variant="destructive" onClick={() => doRelocate(pendingPath.path)}>仍然使用该位置</Button><Button size="sm" variant="outline" onClick={() => setPendingPath(null)}>取消</Button></>}
         {p.kind === "markerMissing" && (confirmEmpty
           ? <><Button size="sm" variant="destructive" disabled={busy} onClick={() => repair(true)}><Wrench />仍然修复</Button><Button size="sm" variant="outline" onClick={() => setConfirmEmpty(false)}>取消</Button></>
           : <Button size="sm" disabled={busy} onClick={() => repair(false)}><Wrench />修复</Button>)}
         {p.kind === "overlap" && !pendingPath && <>
-          {isTauri() && <Button size="sm" onClick={relocate}><FolderOpen />重新选择位置</Button>}
+          {isTauri() && <Button size="sm" onClick={() => relocate()}><FolderOpen />重新选择位置</Button>}
           <Button size="sm" variant="outline" onClick={onRemove}><FolderMinus />移除</Button>
         </>}
         {p.kind === "pathMissing" && <>
-          {isTauri() && <Button size="sm" onClick={relocate}><FolderOpen />重新选择位置</Button>}
+          {isTauri() && <Button size="sm" onClick={() => relocate()}><FolderOpen />重新选择位置</Button>}
           <Button size="sm" variant="outline" onClick={onRemove}><FolderMinus />移除</Button>
         </>}
       </div>
@@ -468,6 +483,8 @@ export default function Folders() {
   const [settingsOf, setSettings] = useState<Folder | null>(null);
   const [versionsOf, setVersions] = useState<Folder | null>(null);
   const [retentionOf, setRetentionOf] = useState<Folder | null>(null);
+  const [filesOf, setFilesOf] = useState<Folder | null>(null);
+  const open = (f: Folder) => (isMobile ? setFilesOf(f) : openFolder(f));
 
   return (
     <>
@@ -482,9 +499,9 @@ export default function Folders() {
           </CardHeader>
           <CardContent className="space-y-2">
             {invitations.map((i) => (
-              <div key={i.folderID + i.deviceID} className="flex items-center gap-3 rounded-lg border bg-card p-3">
-                <div className="flex size-9 items-center justify-center rounded-lg bg-violet-500/10 text-violet-600"><FolderInput className="size-4" /></div>
-                <div className="min-w-0 flex-1">
+              <div key={i.folderID + i.deviceID} className="flex flex-wrap items-center gap-3 rounded-lg border bg-card p-3">
+                <div className="hidden size-9 items-center justify-center rounded-lg bg-violet-500/10 text-violet-600 sm:flex"><FolderInput className="size-4" /></div>
+                <div className="min-w-0 flex-1 basis-56">
                   <div className="text-sm"><b>{i.deviceName || short(i.deviceID)}</b> 邀请你加入「<b>{i.label}</b>」</div>
                   <div className="text-xs text-muted-foreground">{i.time ? new Date(i.time).toLocaleString("zh-CN") : ""} · 文件夹 ID <span className="font-mono">{i.folderID}</span></div>
                 </div>
@@ -508,12 +525,12 @@ export default function Folders() {
             const tone = f.problem ? "red" : st === "idle" ? "green" : st === "error" ? "red" : st === "paused" ? "gray" : "amber";
             return (
               <Card key={f.id} className="py-4">
-                <CardContent className="px-5">
-                  <div className="flex items-start gap-4">
-                    <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-violet-500/10 text-violet-600"><FolderSync className="size-5" /></div>
+                <CardContent className="px-4 sm:px-5">
+                  <div className="flex items-start gap-3 sm:gap-4">
+                    <div className="hidden size-10 shrink-0 items-center justify-center rounded-lg bg-violet-500/10 text-violet-600 sm:flex"><FolderSync className="size-5" /></div>
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">{f.label || f.id}</span>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium break-all">{f.label || f.id}</span>
                         <Badge variant="outline" className="gap-1.5"><Dot tone={tone} pulse={tone === "amber"} />{f.problem ? (f.problem.kind === "overlap" ? "位置重叠" : f.problem.kind === "pathMissing" ? "路径丢失" : f.problem.kind === "markerMissing" ? "需要修复" : "出错") : STATE_CN[st] ?? st}</Badge>
                         {f.mode === "readonly" && (
                           <Tooltip><TooltipTrigger asChild>
@@ -523,8 +540,8 @@ export default function Folders() {
                         {f.conflicts > 0 && <Badge className="bg-red-500 text-white">{f.conflicts} 个冲突</Badge>}
                       </div>
                       <Tooltip><TooltipTrigger asChild>
-                        <button className="mt-0.5 block max-w-full truncate text-left font-mono text-xs text-muted-foreground hover:text-foreground hover:underline" onClick={() => openFolder(f)} data-testid="folder-path">{f.path}</button>
-                      </TooltipTrigger><TooltipContent>在资源管理器中打开</TooltipContent></Tooltip>
+                        <button className="mt-0.5 block max-w-full truncate text-left font-mono text-xs text-muted-foreground hover:text-foreground hover:underline" onClick={() => open(f)} data-testid="folder-path">{f.path}</button>
+                      </TooltipTrigger><TooltipContent>{isMobile ? "浏览文件" : "在资源管理器中打开"}</TooltipContent></Tooltip>
                       <div className="mt-3 flex items-center gap-3">
                         <Progress value={pct} className={`h-1.5 flex-1 ${pct === 100 ? "[&_[data-slot=progress-indicator]]:bg-emerald-500" : "[&_[data-slot=progress-indicator]]:bg-sky-500"}`} />
                         <span className="w-10 text-right text-xs tabular-nums text-muted-foreground">{pct}%</span>
@@ -546,20 +563,21 @@ export default function Folders() {
                       <ReadOnlyBar folder={f} />
                       {f.problem && <ProblemBanner folder={f} onRemove={() => setRemoving(f)} />}
                     </div>
-                    <div className="flex shrink-0 gap-1">
+                    <div className="-mt-1 -mr-2 flex shrink-0 gap-1 sm:mt-0 sm:mr-0">
                       <Tooltip><TooltipTrigger asChild>
-                        <Button variant="ghost" size="icon" onClick={() => setEditing(f)}><UserCog /></Button>
+                        <Button variant="ghost" size="icon" className="hidden sm:inline-flex" onClick={() => setEditing(f)}><UserCog /></Button>
                       </TooltipTrigger><TooltipContent>管理成员</TooltipContent></Tooltip>
                       <Tooltip><TooltipTrigger asChild>
-                        <Button variant="ghost" size="icon" onClick={() => run(() => api("POST", `/api/folders/${f.id}/scan`), "已开始扫描")}><RefreshCw /></Button>
+                        <Button variant="ghost" size="icon" className="hidden sm:inline-flex" onClick={() => run(() => api("POST", `/api/folders/${f.id}/scan`), "已开始扫描")}><RefreshCw /></Button>
                       </TooltipTrigger><TooltipContent>立即扫描</TooltipContent></Tooltip>
                       <Tooltip><TooltipTrigger asChild>
-                        <Button variant="ghost" size="icon" onClick={() => run(() => api("POST", `/api/folders/${f.id}/${f.paused ? "resume" : "pause"}`), f.paused ? "已恢复同步" : "已暂停同步")}>{f.paused ? <Play /> : <Pause />}</Button>
+                        <Button variant="ghost" size="icon" className="hidden sm:inline-flex" onClick={() => run(() => api("POST", `/api/folders/${f.id}/${f.paused ? "resume" : "pause"}`), f.paused ? "已恢复同步" : "已暂停同步")}>{f.paused ? <Play /> : <Pause />}</Button>
                       </TooltipTrigger><TooltipContent>{f.paused ? "恢复同步" : "暂停同步"}</TooltipContent></Tooltip>
                       <DropdownMenu>
-                        <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal /></Button></DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-44">
-                          <DropdownMenuItem onClick={() => openFolder(f)}><FolderOpen />打开文件夹</DropdownMenuItem>
+                        <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="size-10 sm:size-9" aria-label="更多操作"><MoreHorizontal /></Button></DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-48">
+                          <DropdownMenuItem onClick={() => open(f)}><FolderOpen />{isMobile ? "浏览文件 / 导入" : "打开文件夹"}</DropdownMenuItem>
+                          {isMobile && <DropdownMenuItem onClick={() => run(() => api("POST", `/api/folders/${f.id}/${f.paused ? "resume" : "pause"}`), f.paused ? "已恢复同步" : "已暂停同步")}>{f.paused ? <Play /> : <Pause />}{f.paused ? "恢复同步" : "暂停同步"}</DropdownMenuItem>}
                           <DropdownMenuSeparator />
                           <DropdownMenuItem onClick={() => setEditing(f)}><UserCog />管理成员</DropdownMenuItem>
                           <DropdownMenuItem onClick={() => setSettings(f)}><Settings2 />共享设置</DropdownMenuItem>
@@ -585,6 +603,7 @@ export default function Folders() {
       <FolderSettingsDialog folder={settingsOf} onClose={() => setSettings(null)} />
       <VersionsDialog folder={versionsOf} onClose={() => setVersions(null)} />
       <RetentionDialog folder={retentionOf} onClose={() => setRetentionOf(null)} />
+      <FilesDialog folder={filesOf} onClose={() => setFilesOf(null)} />
     </>
   );
 }

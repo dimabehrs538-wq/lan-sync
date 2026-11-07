@@ -1,0 +1,147 @@
+name: 构建 Android 安装包
+
+# push main / 手动：构建并上传构件（有签名 Secrets 时签名）。
+# 正式发布由 release.yml（v* 标签）调用：缺少签名 Secrets 时直接失败，绝不发布未签名或临时签名的 APK。
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-android-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NDK_VERSION: 27.2.12479018
+
+jobs:
+  test:
+    name: 内核测试 + 桌面/移动端互通 e2e
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: core/mobile/go.mod
+          cache-dependency-path: core/mobile/go.sum
+
+      - name: Go 单元测试（桌面内核）
+        working-directory: core
+        run: go vet ./... && go test ./...
+
+      - name: Go 单元测试（移动端内核）
+        working-directory: core/mobile
+        run: go vet -tags noupgrade,noassets ./... && go test -tags noupgrade,noassets ./...
+
+      - name: 下载官方 Syncthing（桌面节点使用）
+        run: scripts/fetch-syncthing.sh v2.1.6 linux amd64
+
+      - name: e2e：移动端内核 ↔ 桌面内核（手动地址配对、文件导入导出、冲突、删除保护、重启）
+        run: scripts/e2e-mobile-desktop.sh
+
+      - name: e2e：全部为桌面节点（回归）
+        run: scripts/e2e-two-nodes.sh
+
+      - name: e2e：B、C 为移动端内核，A 为桌面
+        run: MOBILE_NODES="B C" scripts/e2e-two-nodes.sh
+
+      - name: e2e：A 为移动端内核，B、C 为桌面
+        run: MOBILE_NODES="A" scripts/e2e-two-nodes.sh
+
+  build:
+    name: APK / AAB（arm64-v8a）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: core/mobile/go.mod
+          cache-dependency-path: core/mobile/go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri -> target
+          key: android
+
+      - name: 安装 Android NDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" >/dev/null
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+
+      - name: 编译移动端 Go 内核（libteamsynccore.so）
+        run: scripts/build-mobile-core.sh android aarch64-linux-android
+
+      - name: 安装前端依赖
+        working-directory: app
+        run: npm ci
+
+      - name: 写入发布签名（来自仓库 Secrets，不落盘到仓库）
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KS_B64" ] || [ -z "$KS_PASS" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASS" ]; then
+            if [[ "$GITHUB_REF" == refs/tags/v* ]]; then echo "::error::缺少 Android 签名 Secrets，正式发布终止"; exit 1; fi
+            echo "::warning::未配置 Android 签名 Secrets，本次只生成未签名构件"; exit 0
+          fi
+          KS="$RUNNER_TEMP/teamsync-release.jks"
+          printf '%s' "$KS_B64" | base64 -d > "$KS"
+          umask 077
+          { echo "storeFile=$KS"; echo "storePassword=$KS_PASS"; echo "keyAlias=$KEY_ALIAS"; echo "keyPassword=$KEY_PASS"; } > app/src-tauri/gen/android/keystore.properties
+          echo "SIGNED=1" >> "$GITHUB_ENV"
+
+      - name: 构建 APK + AAB
+        working-directory: app
+        run: npx tauri android build --apk --aab --target aarch64 --ci
+
+      - name: 校验并整理产物
+        run: |
+          set -euo pipefail
+          VER=$(node -p "require('./app/src-tauri/tauri.conf.json').version")
+          OUT=app/src-tauri/gen/android/app/build/outputs
+          APK=$(ls $OUT/apk/universal/release/*.apk | head -1); AAB=$(ls $OUT/bundle/universalRelease/*.aab | head -1)
+          mkdir -p dist-android
+          cp "$APK" "dist-android/TeamSync_${VER}_android_arm64.apk"
+          cp "$AAB" "dist-android/TeamSync_${VER}_android_arm64.aab"
+          for f in dist-android/*; do
+            unzip -l "$f" | grep -q "lib/arm64-v8a/libteamsynccore.so" || { echo "$f 缺少移动端内核"; exit 1; }
+            unzip -l "$f" | grep -q "lib/arm64-v8a/libteamsync_lib.so" || { echo "$f 缺少应用库"; exit 1; }
+          done
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          if [ "${SIGNED:-}" = 1 ]; then
+            "$BT/apksigner" verify --verbose --print-certs dist-android/*.apk | grep -E "Verified using|Signer #1 certificate (DN|SHA-256)"
+            jarsigner -verify dist-android/*.aab | tail -1
+          fi
+          (cd dist-android && sha256sum *)
+          rm -f app/src-tauri/gen/android/keystore.properties "$RUNNER_TEMP/teamsync-release.jks"
+
+      - name: 上传构件
+        uses: actions/upload-artifact@v4
+        with:
+          name: TeamSync-android-arm64
+          path: dist-android/*
+          if-no-files-found: error

@@ -7,16 +7,29 @@
 #  5. 移除：B 仅停止同步（文件保留、不再同步、不会再作为邀请出现，重新邀请后出现）；
 #     C 同时删除本地文件（进回收站，A 不受影响）
 # 用法: scripts/e2e-two-nodes.sh   需要先 scripts/fetch-syncthing.sh
+# 互通测试: MOBILE_NODES="B C" scripts/e2e-two-nodes.sh  —— 指定节点改为运行 Android/iOS 同款移动端内核
+#   （core/mobile，进程内嵌入 syncthing），其余节点仍是桌面 teamsyncd + 官方 syncthing 二进制。
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ST="$(ls "$ROOT"/app/src-tauri/binaries/syncthing-* | grep -v LICENSE | head -1)"
 W="$(mktemp -d)"; T="$W/teamsyncd"
 (cd "$ROOT/core" && go build -o "$T" ./cmd/teamsyncd)
+MOBILE_NODES="${MOBILE_NODES:-}"; M="$W/teamsync-mobile-node"
+if [ -n "$MOBILE_NODES" ]; then
+  (cd "$ROOT/core/mobile" && go build -tags noupgrade,noassets -ldflags "-X github.com/syncthing/syncthing/lib/build.Version=${SYNCTHING_VERSION:-v2.1.6}" -o "$M" ./cmd/teamsync-mobile-node)
+  echo "移动端内核节点: $MOBILE_NODES"
+fi
+is_mobile(){ [[ " $MOBILE_NODES " == *" $1 "* ]]; }
 PIDS=()
 cleanup(){ kill "${PIDS[@]}" 2>/dev/null || true; wait 2>/dev/null || true; rm -rf "$W"; }
 trap cleanup EXIT
 declare -A PORT=([A]=22101 [B]=22102 [C]=22103) PID
-start(){ TEAMSYNC_GUARD_INTERVAL_S=3 XDG_DATA_HOME="$W/$1-xdg" "$T" serve --home "$W/$1" --folders-dir "$W/$1-base" --listen "tcp://0.0.0.0:${PORT[$1]}" --syncthing "$ST" >>"$W/$1.log" 2>&1 & PID[$1]=$!; PIDS+=($!); }
+start(){
+  if is_mobile "$1"; then
+    TEAMSYNC_GUARD_INTERVAL_S=3 "$M" --home "$W/$1" --folders-dir "$W/$1-base" --listen "tcp://0.0.0.0:${PORT[$1]}" >>"$W/$1.log" 2>&1 & PID[$1]=$!; PIDS+=($!)
+  else
+    TEAMSYNC_GUARD_INTERVAL_S=3 XDG_DATA_HOME="$W/$1-xdg" "$T" serve --home "$W/$1" --folders-dir "$W/$1-base" --listen "tcp://0.0.0.0:${PORT[$1]}" --syncthing "$ST" >>"$W/$1.log" 2>&1 & PID[$1]=$!; PIDS+=($!)
+  fi; }
 for n in A B C; do start $n; done
 for n in A B C; do until [ -f "$W/$n/daemon.json" ]; do sleep 0.5; done; done
 id(){ "$T" status --home "$W/$1" | sed -n 's/.*"myID": "\(.*\)".*/\1/p'; }
@@ -109,9 +122,15 @@ t A reinvite "$FID" "$IB" >/dev/null
 wait_for "t B invites | grep -q $FID" "A 重新邀请后 B 收到邀请" 60
 
 # ---- 移除并删除本地文件 ----
+if is_mobile C; then
+  # 手机没有系统回收站：界面上只提供“永久删除本地文件”（--permanent）
+  t C remove-folder "$FID" --delete-files --permanent | grep -q '"trashed": false' && echo "✔ 移动端确认后永久删除本地文件" || { echo "✘ 移动端永久删除"; exit 1; }
+  [ ! -e "$W/C-设计" ] && echo "✔ C 本地目录已删除" || { echo "✘ C 本地目录仍在"; exit 1; }
+else
 t C remove-folder "$FID" --delete-files | grep -q '"trashed": true' && echo "✔ C 删除文件（进回收站）"
 [ ! -e "$W/C-设计" ] && echo "✔ C 本地目录已删除"
 ls "$W/C-xdg/Trash/files/" | grep -q "C-设计" && echo "✔ 回收站中可找回"
+fi
 sleep 8
 [ -f "$W/A-docs/接口.md" ] && [ -f "$W/A-docs/新文件.md" ] && echo "✔ A 的文件不受影响" || { echo "✘ A 文件受影响"; ls -la "$W/A-docs"; exit 1; }
 # ---- v0.2.4：上下线防抖、断线合并、存储上限 ----

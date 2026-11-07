@@ -1,9 +1,11 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 
-export interface CoreInfo { port: number; token: string }
+export interface CoreInfo { port: number; token: string; platform?: string }
 export interface Status {
   engine: string; myID?: string; uptime?: number; syncthingVersion?: string;
   connected?: number; folders?: number; syncing?: boolean; error?: string;
+  /** 本机局域网地址（tcp://IP:端口），无法自动发现时供同事手动填写 */
+  addresses?: string[];
 }
 export interface FolderStatus { state: string; globalFiles: number; localFiles: number; needFiles: number; needBytes: number; globalBytes: number; errors: number; error?: string; receiveOnlyChangedFiles?: number }
 export interface Folder {
@@ -33,6 +35,8 @@ export interface Conflict { path: string; original: string; time: string; device
 export interface UIEvent { type: string; message?: string; notify: boolean; time: string; data?: unknown; key?: string; activityId?: number }
 export interface ActivityItem { id: number; message: string; time: string; type: string; key?: string; data?: Record<string, string> }
 export interface FileVersion { versionTime: string; modTime: string; size: number; file?: string }
+export interface FileEntry { name: string; path: string; abs: string; dir: boolean; size: number; modTime: string }
+export interface FileList { dir: string; root: string; entries: FileEntry[] }
 export interface VersionedFile { path: string; deleted: boolean; latest: string; versions: FileVersion[] }
 
 let core: CoreInfo | null = null;
@@ -73,6 +77,29 @@ export async function api<T = unknown>(method: string, path: string, body?: unkn
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new ApiError((data as { error?: string }).error || HTTP_CN[r.status] || `请求失败（HTTP ${r.status}）`, r.status, data as Record<string, unknown>);
   return data as T;
+}
+
+/** 上传（导入）文件到团队文件夹：dir 为相对目录；默认不覆盖同名文件（自动改名） */
+export async function uploadFile(folderID: string, dir: string, file: File) {
+  const c = await getCore();
+  const q = new URLSearchParams({ dir, name: file.name });
+  let r: Response;
+  try {
+    r = await fetch(`http://127.0.0.1:${c.port}/api/folders/${encodeURIComponent(folderID)}/files?${q}`, {
+      method: "POST", headers: { Authorization: `Bearer ${c.token}`, "Content-Type": "application/octet-stream" }, body: file,
+    });
+  } catch { throw new Error("无法连接内核服务，请稍后重试"); }
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new ApiError((data as { error?: string }).error || HTTP_CN[r.status] || `上传失败（HTTP ${r.status}）`, r.status, data as Record<string, unknown>);
+  return data as { name: string; path: string; abs: string; size: number };
+}
+
+/** 读取团队文件夹中的文件内容（导出/分享） */
+export async function downloadFile(folderID: string, path: string): Promise<Blob> {
+  const c = await getCore();
+  const r = await fetch(`http://127.0.0.1:${c.port}/api/folders/${encodeURIComponent(folderID)}/file?${new URLSearchParams({ path })}`, { headers: { Authorization: `Bearer ${c.token}` } });
+  if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error || `读取失败（HTTP ${r.status}）`);
+  return r.blob();
 }
 
 export async function eventSourceURL() {

@@ -6,9 +6,11 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -169,12 +171,54 @@ func (s *Service) Reinvite(ctx context.Context, folderID, deviceID string, gap t
 
 // AddMember 添加成员设备（地址 dynamic，靠局域网发现）。
 // 不会自动共享文件夹，也不自动接收对方的文件夹（邀请制）。
-func (s *Service) AddMember(ctx context.Context, deviceID, name string) error {
+func (s *Service) AddMember(ctx context.Context, deviceID, name string, addresses ...string) error {
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {
 		return errors.New("设备 ID 不能为空")
 	}
-	return s.C.PutDevice(ctx, stclient.Device{DeviceID: deviceID, Name: name, Addresses: []string{"dynamic"}})
+	addrs := []string{}
+	for _, a := range addresses {
+		if strings.TrimSpace(a) == "" {
+			continue
+		}
+		n, err := NormalizeAddress(a)
+		if err != nil {
+			return err
+		}
+		addrs = append(addrs, n)
+	}
+	// 始终保留 dynamic：局域网发现到的新地址仍然可用
+	addrs = append(addrs, "dynamic")
+	return s.C.PutDevice(ctx, stclient.Device{DeviceID: deviceID, Name: name, Addresses: addrs})
+}
+
+// NormalizeAddress 把用户输入的对方地址规范化为 Syncthing 地址：
+// 192.168.1.5 → tcp://192.168.1.5:22000，host:22001 → tcp://host:22001；已有 tcp:// / quic:// 前缀则保持。
+// 用于 iPhone 等无法使用局域网广播发现的设备手动连接同事。
+func NormalizeAddress(a string) (string, error) {
+	a = strings.TrimSpace(a)
+	bad := fmt.Errorf("地址格式不正确：%s（示例：192.168.1.5 或 192.168.1.5:22000）", a)
+	scheme := "tcp"
+	for _, p := range []string{"tcp://", "tcp4://", "tcp6://", "quic://", "quic4://", "quic6://"} {
+		if strings.HasPrefix(strings.ToLower(a), p) {
+			scheme, a = strings.TrimSuffix(p, "://"), a[len(p):]
+			break
+		}
+	}
+	if a == "" || strings.ContainsAny(a, "/ ?#@") {
+		return "", bad
+	}
+	host, port, err := net.SplitHostPort(a)
+	if err != nil {
+		host, port = strings.Trim(a, "[]"), "22000"
+	}
+	if host == "" || strings.Contains(host, "%") {
+		return "", bad
+	}
+	if p, err := strconv.Atoi(port); err != nil || p < 1 || p > 65535 {
+		return "", bad
+	}
+	return scheme + "://" + net.JoinHostPort(host, port), nil
 }
 
 // MaxNameLen 是成员备注名的最大长度（按字符计）。

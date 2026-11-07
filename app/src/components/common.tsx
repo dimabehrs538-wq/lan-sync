@@ -6,10 +6,10 @@ import { cn } from "@/lib/utils";
 
 export function PageHeader({ title, desc, actions }: { title: string; desc?: string; actions?: ReactNode }) {
   return (
-    <div className="mb-6 flex items-start justify-between gap-4">
-      <div>
-        <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
-        {desc && <p className="mt-1 text-sm text-muted-foreground">{desc}</p>}
+    <div className="mb-4 flex flex-wrap items-start justify-between gap-3 sm:mb-6 sm:flex-nowrap sm:gap-4">
+      <div className="min-w-0">
+        <h1 className="text-lg font-semibold tracking-tight sm:text-xl">{title}</h1>
+        {desc && <p className="mt-1 text-xs text-muted-foreground sm:text-sm">{desc}</p>}
       </div>
       {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
     </div>

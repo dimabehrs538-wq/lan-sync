@@ -7,8 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -116,6 +119,9 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("POST /api/folders/{id}/versions/cleanup", s.cleanupVersions)
 	m.HandleFunc("PUT /api/folders/{id}/retention", s.setFolderRetention)
 	m.HandleFunc("DELETE /api/activity", s.clearActivity)
+	m.HandleFunc("GET /api/folders/{id}/files", s.listFiles)
+	m.HandleFunc("POST /api/folders/{id}/files", s.uploadFile)
+	m.HandleFunc("GET /api/folders/{id}/file", s.downloadFile)
 	return s.cors(s.auth(m))
 }
 
@@ -201,6 +207,35 @@ func respond(w http.ResponseWriter, v any, err error) {
 	writeJSON(w, v)
 }
 
+// lanAddresses 返回本机可供同事手动填写的局域网 TCP 地址（去重、排除回环与链路本地地址）。
+func lanAddresses(st stclient.SystemStatus) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	keys := make([]string, 0, len(st.ConnectionServiceStatus))
+	for k := range st.ConnectionServiceStatus {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		for _, a := range st.ConnectionServiceStatus[k].LANAddresses {
+			u, err := url.Parse(a)
+			if err != nil || !strings.HasPrefix(u.Scheme, "tcp") {
+				continue
+			}
+			ip := net.ParseIP(u.Hostname())
+			if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() || ip.To4() == nil {
+				continue
+			}
+			v := "tcp://" + u.Host
+			if !seen[v] {
+				seen[v] = true
+				out = append(out, v)
+			}
+		}
+	}
+	return out
+}
+
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	out := map[string]any{"engine": s.EngineState()}
@@ -212,6 +247,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	}
 	out["myID"] = st.MyID
 	out["uptime"] = st.Uptime
+	out["addresses"] = lanAddresses(st)
 	if v, err := s.C.Version(ctx); err == nil {
 		out["syncthingVersion"] = v.Version
 	}
@@ -463,12 +499,21 @@ func (s *Server) addDevice(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		DeviceID string `json:"deviceID"`
 		Name     string `json:"name"`
+		Address  string `json:"address"` // 可选：对方地址（无法局域网发现时，例如 iPhone）
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, 400, err)
 		return
 	}
-	err := s.Team.AddMember(r.Context(), in.DeviceID, in.Name)
+	var addrs []string
+	if strings.TrimSpace(in.Address) != "" {
+		if _, err := team.NormalizeAddress(in.Address); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		addrs = append(addrs, in.Address)
+	}
+	err := s.Team.AddMember(r.Context(), in.DeviceID, in.Name, addrs...)
 	if err == nil && strings.TrimSpace(in.Name) != "" {
 		_ = s.Store.SetRemark(strings.TrimSpace(in.DeviceID), true)
 	}

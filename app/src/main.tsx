@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { DataProvider } from "@/lib/store";
 import { UpdaterProvider } from "@/lib/updater";
 import App from "./App";
+import { isMobile } from "@/lib/platform";
 import "./index.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
@@ -16,7 +17,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           <UpdaterProvider>
             <App />
           </UpdaterProvider>
-          <Toaster position="bottom-right" richColors closeButton />
+          <Toaster position={isMobile ? "top-center" : "bottom-right"} richColors closeButton />
         </DataProvider>
       </TooltipProvider>
     </ThemeProvider>

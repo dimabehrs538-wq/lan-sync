@@ -79,6 +79,10 @@ type SystemStatus struct {
 	MyID      string `json:"myID"`
 	Uptime    int    `json:"uptime"`
 	StartTime string `json:"startTime"`
+	// 各监听器的局域网地址（例如 tcp://192.168.1.5:22000），用于在无法局域网广播发现时手动填写对方地址
+	ConnectionServiceStatus map[string]struct {
+		LANAddresses []string `json:"lanAddresses"`
+	} `json:"connectionServiceStatus"`
 }
 
 type Version struct {

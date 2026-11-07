@@ -65,14 +65,16 @@ function RenameDialog({ device, onClose }: { device: Device | null; onClose: () 
   );
 }
 import { useData } from "@/lib/store";
+import { isIOS } from "@/lib/platform";
 
 function AddDeviceDialog({ open, onOpenChange, preset }: { open: boolean; onOpenChange: (v: boolean) => void; preset?: string }) {
   const { run } = useData();
   const [id, setId] = useState("");
   const [name, setName] = useState("");
+  const [address, setAddress] = useState("");
   const deviceID = preset ?? id;
   return (
-    <Dialog open={open} onOpenChange={(v) => { onOpenChange(v); if (!v) { setId(""); setName(""); } }}>
+    <Dialog open={open} onOpenChange={(v) => { onOpenChange(v); if (!v) { setId(""); setName(""); setAddress(""); } }}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{preset ? "添加附近设备" : "手动添加成员"}</DialogTitle>
@@ -80,7 +82,7 @@ function AddDeviceDialog({ open, onOpenChange, preset }: { open: boolean; onOpen
         </DialogHeader>
         <form id="add-dev" className="space-y-4" onSubmit={async (e) => {
           e.preventDefault();
-          if (await run(() => api("POST", "/api/devices", { deviceID, name }), "已添加，等待对方同意")) { onOpenChange(false); setId(""); setName(""); }
+          if (await run(() => api("POST", "/api/devices", { deviceID, name, address }), "已添加，等待对方同意")) { onOpenChange(false); setId(""); setName(""); setAddress(""); }
         }}>
           <div className="space-y-2">
             <Label>设备 ID</Label>
@@ -88,6 +90,13 @@ function AddDeviceDialog({ open, onOpenChange, preset }: { open: boolean; onOpen
               : <Input value={id} onChange={(e) => setId(e.target.value)} placeholder="XXXXXXX-XXXXXXX-…" className="font-mono text-xs" required autoFocus />}
           </div>
           <div className="space-y-2"><Label>备注名</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：张三" autoFocus={!!preset} /></div>
+          {!preset && (
+            <div className="space-y-2">
+              <Label>对方地址（可选）</Label>
+              <Input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="例如：192.168.1.5 或 192.168.1.5:22000" className="font-mono text-xs" inputMode="url" autoCapitalize="off" autoCorrect="off" />
+              <p className="text-xs text-muted-foreground">{isIOS ? "iPhone 无法使用局域网广播发现同事，请填写对方电脑的局域网地址（在对方“成员 → 邀请同事加入”中可以看到）。" : "一般留空即可（自动在局域网中查找）；网络不支持广播发现、或对方是 iPhone 时再填写。"}</p>
+            </div>
+          )}
         </form>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>取消</Button>
@@ -113,6 +122,12 @@ function PairDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: b
           <div className="font-mono text-sm leading-relaxed tracking-wide break-all">{id}</div>
           <div className="mt-2 text-xs text-muted-foreground">短码 <span className="font-mono font-semibold text-foreground">{short(id)}</span></div>
         </div>
+        {!!status?.addresses?.length && (
+          <div className="rounded-lg border p-3 text-xs" data-testid="my-addresses">
+            <div className="mb-1 text-muted-foreground">本机局域网地址（对方无法自动发现你时，可在“手动添加成员”中填写）</div>
+            {status.addresses.map((a) => <div key={a} className="font-mono text-foreground">{a.replace(/^tcp:\/\//, "")}</div>)}
+          </div>
+        )}
         <DialogFooter><CopyButton text={id} label="复制设备 ID" /><Button onClick={() => onOpenChange(false)}>完成</Button></DialogFooter>
       </DialogContent>
     </Dialog>
@@ -168,7 +183,7 @@ export default function Members() {
         </CardHeader>
         <CardContent>
           {found.length === 0 ? <p className="text-sm text-muted-foreground">正在搜索… 请确认同事已打开本软件并处于同一局域网。</p> : (
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {found.map((n) => (
                 <div key={n.deviceID} className="flex items-center gap-3 rounded-lg border p-3">
                   <Avatar name={n.deviceID} id={n.deviceID} />

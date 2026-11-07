@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 分享/打开团队文件夹中的文件（只读授权给目标应用）。不包含 App 内部数据目录（设备证书与密钥在那里）。 -->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+  <external-files-path name="teamsync_files" path="." />
+  <external-path name="shared_storage" path="." />
+  <cache-path name="shared_cache" path="shared/" />
+</paths>

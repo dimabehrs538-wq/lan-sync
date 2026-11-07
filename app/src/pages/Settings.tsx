@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowUpCircle, Bell, FolderOpen, History, Wifi, Info, Laptop, Moon, Power, Save, ShieldCheck, Sun } from "lucide-react";
+import { ArrowUpCircle, Bell, BatteryCharging, FolderOpen, HardDrive, History, Wifi, Info, Laptop, Moon, Power, Save, ShieldCheck, Smartphone, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -13,11 +13,12 @@ import { RetentionFields, validateRetention } from "@/components/Retention";
 import { useData } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { useUpdater } from "@/lib/updater";
+import { android, isAndroid, isDesktop, isIOS, isMobile } from "@/lib/platform";
 
-function Row({ icon: Icon, title, desc, children }: { icon: typeof Bell; title: string; desc: string; children: React.ReactNode }) {
+function Row({ icon: Icon, title, desc, children }: { icon: typeof Bell; title: string; desc: string; children?: React.ReactNode }) {
   return (
-    <div className="flex items-center gap-4 py-3">
-      <div className="flex size-9 items-center justify-center rounded-lg bg-muted text-muted-foreground"><Icon className="size-4" /></div>
+    <div className="flex items-center gap-3 py-3 sm:gap-4">
+      <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"><Icon className="size-4" /></div>
       <div className="flex-1"><div className="text-sm font-medium">{title}</div><div className="text-xs text-muted-foreground">{desc}</div></div>
       {children}
     </div>
@@ -40,7 +41,16 @@ export default function Settings() {
   const [auto, setAuto] = useState(false);
   const [notify, setNotify] = useState(localStorage.getItem("notify") !== "0");
   useEffect(() => {
-    if (isTauri()) import("@tauri-apps/plugin-autostart").then((m) => m.isEnabled()).then(setAuto).catch(() => {});
+    if (isDesktop) import("@tauri-apps/plugin-autostart").then((m) => m.isEnabled()).then(setAuto).catch(() => {});
+  }, []);
+  // Android：后台继续同步（前台服务）与“所有文件访问权限”
+  const [bg, setBg] = useState(() => !!android()?.isBackgroundSync());
+  const [allFiles, setAllFiles] = useState(() => !!android()?.hasAllFilesAccess());
+  useEffect(() => {
+    if (!isAndroid) return;
+    const f = () => { setAllFiles(!!android()?.hasAllFilesAccess()); setBg(!!android()?.isBackgroundSync()); };
+    document.addEventListener("visibilitychange", f);
+    return () => document.removeEventListener("visibilitychange", f);
   }, []);
   const themes = [{ v: "light", l: "浅色", i: Sun }, { v: "dark", l: "深色", i: Moon }, { v: "system", l: "跟随系统", i: Laptop }];
 
@@ -49,7 +59,7 @@ export default function Settings() {
       <PageHeader title="设置" />
       <Card>
         <CardHeader><CardTitle className="text-sm">外观</CardTitle><CardDescription>选择界面主题</CardDescription></CardHeader>
-        <CardContent className="grid grid-cols-3 gap-3">
+        <CardContent className="grid grid-cols-3 gap-2 sm:gap-3">
           {themes.map((t) => (
             <button key={t.v} onClick={() => setTheme(t.v)} className={cn("flex flex-col items-center gap-2 rounded-lg border p-4 text-sm transition-colors hover:bg-muted/60", theme === t.v && "border-primary ring-2 ring-primary/20")}>
               <t.i className="size-5" />{t.l}
@@ -60,17 +70,28 @@ export default function Settings() {
       <Card className="mt-4">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-sm"><FolderOpen className="size-4" />接收文件夹的默认位置</CardTitle>
-          <CardDescription>接受同事的文件夹邀请时，默认保存到这里的“文件夹名”子目录（每次接受时仍可修改）。</CardDescription>
+          <CardDescription>接受同事的文件夹邀请时，默认保存到这里的“文件夹名”子目录（每次接受时仍可修改）。{isIOS && "iPhone 上默认在本 App 的文稿目录中，可在“文件”App → 我的 iPhone → 团队同步 中查看。"}{isAndroid && "Android 上默认在本 App 的存储目录（Android/data/com.teamsync.app/files）中，卸载 App 时会一并删除。"}</CardDescription>
         </CardHeader>
-        <CardContent className="flex gap-2">
-          <Input value={base} onChange={(e) => setBase(e.target.value)} placeholder="例如：D:\TeamSync" className="font-mono text-xs" />
-          {isTauri() && <Button variant="outline" onClick={async () => {
+        <CardContent className="flex flex-wrap gap-2 sm:flex-nowrap">
+          <Input value={base} onChange={(e) => setBase(e.target.value)} placeholder="例如：D:\TeamSync" className="min-w-0 basis-full font-mono text-xs sm:basis-auto" />
+          {isDesktop && <Button variant="outline" onClick={async () => {
             const { open } = await import("@tauri-apps/plugin-dialog");
             const p = await open({ directory: true, title: "选择默认位置", defaultPath: base || undefined });
             if (typeof p === "string") setBase(p);
           }}><FolderOpen />浏览</Button>}
           <Button disabled={!base || base === settings?.defaultBaseDir} onClick={() => run(() => api("PUT", "/api/settings", { defaultBaseDir: base }), "已保存默认位置")}><Save />保存</Button>
         </CardContent>
+        {isAndroid && (
+          <CardContent className="mt-1 border-t pt-3">
+            <Row icon={HardDrive} title="放到共享存储（可选）" desc={allFiles
+              ? `已授予“所有文件访问权限”，可以把默认位置改为 ${android()?.sharedStorageRoot() ?? "/storage/emulated/0"}/TeamSync，其他 App 和电脑 USB 连接都能看到；卸载 App 也不会删除。`
+              : "需要在系统设置中授予“所有文件访问权限”，才能把团队文件夹放在 App 之外（例如 /storage/emulated/0/TeamSync）。不授予也能正常同步。"}>
+              {allFiles
+                ? <Button variant="outline" size="sm" onClick={() => setBase(`${android()?.sharedStorageRoot() ?? "/storage/emulated/0"}/TeamSync`)}>填入</Button>
+                : <Button variant="outline" size="sm" onClick={() => { const r = android()?.requestAllFilesAccess(); if (r?.startsWith("error:")) toast.error(r.slice(6)); }}>去授权</Button>}
+            </Row>
+          </CardContent>
+        )}
       </Card>
       <Card className="mt-4" data-testid="retention-settings">
         <CardHeader>
@@ -89,14 +110,20 @@ export default function Settings() {
       <Card className="mt-4">
         <CardHeader><CardTitle className="text-sm">通用</CardTitle></CardHeader>
         <CardContent>
-          <Row icon={Power} title="开机自动启动" desc="登录系统后自动在后台运行，只显示托盘图标">
+          {!isMobile && <><Row icon={Power} title="开机自动启动" desc="登录系统后自动在后台运行，只显示托盘图标">
             <Switch checked={auto} disabled={!isTauri()} onCheckedChange={async (v) => {
               const m = await import("@tauri-apps/plugin-autostart");
               try { v ? await m.enable() : await m.disable(); setAuto(v); toast.success(v ? "已开启开机自启" : "已关闭开机自启"); }
               catch (e) { toast.error("设置失败", { description: String(e) }); }
             }} />
           </Row>
-          <Separator />
+          <Separator /></>}
+          {isAndroid && <><Row icon={BatteryCharging} title="切到后台时继续同步" desc="开启后显示一条常驻通知，App 在后台时继续与同事同步（耗电会增加；Android 15 起系统每天最多允许约 6 小时，超时自动停止）。关闭时，App 退到后台不久后同步就会暂停，回到前台自动继续。">
+            <Switch checked={bg} onCheckedChange={(v) => { const r = android()?.setBackgroundSync(v); if (r?.startsWith("error:")) toast.error("设置失败", { description: r.slice(6) }); else { setBg(v); toast.success(v ? "已开启后台同步" : "已关闭后台同步"); } }} />
+          </Row>
+          <Separator /></>}
+          {isIOS && <><Row icon={Smartphone} title="后台同步" desc="iOS 不允许此类 App 在后台持续运行：切到后台或锁屏后约几十秒同步就会暂停，回到前台会自动重新连接并继续。需要传大文件时请保持 App 在前台。" />
+          <Separator /></>}
           <Row icon={Bell} title="文件变更通知" desc="收到文件夹邀请、成员请求加入、成员修改文件时弹出系统通知">
             <Switch checked={notify} onCheckedChange={(v) => { setNotify(v); localStorage.setItem("notify", v ? "1" : "0"); }} />
           </Row>
@@ -113,7 +140,7 @@ export default function Settings() {
           <div className="flex items-center gap-4 py-2">
             <div className="flex-1">
               <div className="text-sm font-medium">当前版本 {up.version || "-"}</div>
-              <div className="text-xs text-muted-foreground">从 GitHub Releases 获取更新，安装包经过签名校验</div>
+              <div className="text-xs text-muted-foreground">{isAndroid ? "从 GitHub Releases 检查新版本，下载 APK 后由系统安装器确认安装" : isIOS ? "从 GitHub Releases 检查新版本；iOS 安装包需自行重新签名后安装" : "从 GitHub Releases 获取更新，安装包经过签名校验"}</div>
             </div>
             <Button variant="outline" disabled={up.checking} onClick={up.checkNow}><ArrowUpCircle className={up.checking ? "animate-spin" : ""} />{up.checking ? "检查中…" : "检查更新"}</Button>
           </div>
@@ -127,12 +154,14 @@ export default function Settings() {
         <CardHeader><CardTitle className="flex items-center gap-2 text-sm"><ShieldCheck className="size-4 text-emerald-600" />网络与隐私</CardTitle></CardHeader>
         <CardContent className="space-y-2 text-sm text-muted-foreground">
           <p>仅在局域网内同步：已关闭全局发现、中继服务器和 NAT 穿透，数据不经过任何外部服务器，设备之间全程 TLS 加密。</p>
-          <p>防火墙需放行 TCP/UDP 22000 与 UDP 21027（局域网发现）。</p>
+          {isMobile
+            ? <p>手机需与同事的电脑连接同一个局域网（Wi-Fi）。{isIOS ? "首次启动时请在系统弹窗中允许“本地网络”访问，否则无法发现和连接同事（可在 设置 → 隐私与安全性 → 本地网络 中修改）。" : "部分路由器开启了“AP 隔离/访客网络”时设备之间无法互相连接。"}</p>
+            : <p>防火墙需放行 TCP/UDP 22000 与 UDP 21027（局域网发现）。</p>}
         </CardContent>
       </Card>
       <Card className="mt-4">
         <CardHeader><CardTitle className="flex items-center gap-2 text-sm"><Info className="size-4" />关于</CardTitle></CardHeader>
-        <CardContent className="grid grid-cols-2 gap-y-2 text-sm">
+        <CardContent className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
           <span className="text-muted-foreground">应用版本</span><span>TeamSync {up.version || "-"}</span>
           <span className="text-muted-foreground">同步引擎</span><span>Syncthing {status?.syncthingVersion ?? "-"}（MPL-2.0）</span>
           <span className="text-muted-foreground">引擎运行时间</span><span>{status?.uptime ? formatUptime(status.uptime) : "-"}</span>

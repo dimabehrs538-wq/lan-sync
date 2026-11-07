@@ -9,7 +9,8 @@ import (
 
 func TestCapsAndPersistence(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "activity.json")
-	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	// 使用当前时间：Open 重新加载时按真实时钟清理 7 天前的记录（固定日期会让测试在一周后失效）
+	now := time.Now().UTC().Truncate(time.Second)
 	l := Open(p)
 	l.Now = func() time.Time { return now }
 	l.Add(Item{Type: "x", Message: "old", Time: now.Add(-8 * 24 * time.Hour)}, 0)

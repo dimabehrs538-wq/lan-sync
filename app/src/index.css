@@ -128,3 +128,16 @@
     @apply font-sans;
     }
 }
+/* 安全区（刘海、圆角、手势条）：iOS 由 viewport-fit=cover 提供 env()；Android 由原生层让出系统栏，env() 为 0 */
+@utility pt-safe { padding-top: env(safe-area-inset-top); }
+@utility pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+@utility pl-safe { padding-left: env(safe-area-inset-left); }
+@utility pr-safe { padding-right: env(safe-area-inset-right); }
+
+@layer base {
+  /* 手机上禁用点击高亮与长按菜单，输入框字号不小于 16px 以免 iOS 自动缩放 */
+  html { -webkit-tap-highlight-color: transparent; -webkit-text-size-adjust: 100%; }
+  @media (max-width: 639px) {
+    input, textarea, select { font-size: 16px !important; }
+  }
+}

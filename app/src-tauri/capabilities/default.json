@@ -1,19 +1,17 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "主窗口权限",
+  "description": "主窗口权限（桌面与移动端通用）",
   "windows": [
     "main"
   ],
   "permissions": [
     "core:default",
-    "core:tray:default",
     "notification:default",
-    "autostart:default",
     "dialog:allow-open",
-    "updater:default",
     "process:default",
     "opener:allow-reveal-item-in-dir",
+    "opener:default",
     {
       "identifier": "opener:allow-open-path",
       "allow": [

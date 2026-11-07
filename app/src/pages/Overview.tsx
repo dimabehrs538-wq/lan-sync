@@ -42,7 +42,7 @@ export default function Overview({ go }: { go: (p: Page) => void }) {
   return (
     <>
       <PageHeader title="概览" desc="团队文件夹在局域网内自动同步，数据不经过任何外部服务器。" />
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat icon={syncing ? Loader2 : CheckCircle2} label="同步状态" value={status?.error ? "未就绪" : syncing ? "同步中" : "已同步"}
           sub={status?.uptime ? `已运行 ${formatUptime(status.uptime)}` : undefined}
           tone={syncing ? "bg-amber-500/10 text-amber-600 [&_svg]:animate-spin" : "bg-emerald-500/10 text-emerald-600"} />
@@ -82,8 +82,8 @@ export default function Overview({ go }: { go: (p: Page) => void }) {
         </CardContent>
       </Card>
 
-      <div className="mt-4 grid grid-cols-5 gap-4">
-        <Card className="col-span-3">
+      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-5">
+        <Card className="sm:col-span-3">
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle className="text-sm">文件夹进度</CardTitle>
             <Button variant="ghost" size="sm" onClick={() => go("folders")}>全部 <ArrowRight /></Button>
@@ -107,7 +107,7 @@ export default function Overview({ go }: { go: (p: Page) => void }) {
             })}
           </CardContent>
         </Card>
-        <Card className="col-span-2">
+        <Card className="sm:col-span-2">
           <CardHeader><CardTitle className="text-sm">成员</CardTitle></CardHeader>
           <CardContent className="space-y-3">
             {members.length === 0 && <p className="text-sm text-muted-foreground">还没有成员</p>}

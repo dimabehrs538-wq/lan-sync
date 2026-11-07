@@ -12,11 +12,12 @@ import { api, formatBytes, isTauri, type Folder, type VersionedFile } from "@/li
 import { useData } from "@/lib/store";
 import { formatCap, VersionsUsage } from "@/components/Retention";
 import { cn } from "@/lib/utils";
+import { isDesktop, isIOS, isMobile, openFile } from "@/lib/platform";
 
 const fmt = (t: string) => new Date(t).toLocaleString("zh-CN", { hour12: false });
 
 async function openPath(p: string) {
-  try { const m = await import("@tauri-apps/plugin-opener"); await m.openPath(p); }
+  try { await openFile(p); }
   catch (e) { toast.error("无法打开文件", { description: String(e) }); }
 }
 async function reveal(p: string) {
@@ -105,9 +106,9 @@ export function VersionsDialog({ folder, onClose }: { folder: Folder | null; onC
                               <td className="w-0 whitespace-nowrap pl-3 text-right">
                                 <Button size="sm" variant="ghost" className="h-7" disabled={!!busy} onClick={() => restore(f.path, v.versionTime)}><RotateCcw />恢复</Button>
                                 <Tooltip><TooltipTrigger asChild>
-                                  <Button size="sm" variant="ghost" className="h-7" disabled={!v.file || !isTauri()} onClick={() => v.file && openPath(v.file)}><ExternalLink />打开</Button>
+                                  <Button size="sm" variant="ghost" className="h-7" disabled={!v.file || !isTauri() || isIOS} onClick={() => v.file && openPath(v.file)}><ExternalLink />打开</Button>
                                 </TooltipTrigger><TooltipContent>用默认程序打开这个版本（只读查看，不影响当前文件）</TooltipContent></Tooltip>
-                                <Button size="sm" variant="ghost" className="h-7" disabled={!v.file || !isTauri()} onClick={() => v.file && reveal(v.file)}><FolderSearch />在文件夹中显示</Button>
+                                {!isMobile && <Button size="sm" variant="ghost" className="h-7" disabled={!v.file || !isDesktop} onClick={() => v.file && reveal(v.file)}><FolderSearch />在文件夹中显示</Button>}
                               </td>
                             </tr>
                           ))}

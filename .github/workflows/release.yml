@@ -1,0 +1,70 @@
+name: 正式发布（Windows + Android + iOS）
+
+# 推送 v* 标签时：三端分别构建，全部成功后统一创建一个正式 Release。
+# 已存在同名 Release 时直接失败，绝不覆盖。说明取自 docs/releases/<标签>.md。
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    uses: ./.github/workflows/build-windows.yml
+    secrets: inherit
+  android:
+    uses: ./.github/workflows/build-android.yml
+    secrets: inherit
+  ios:
+    uses: ./.github/workflows/build-ios.yml
+
+  release:
+    needs: [windows, android, ios]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: 整理并校验
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VER="${TAG#v}"
+          [ "$(node -p "require('./app/src-tauri/tauri.conf.json').version")" = "$VER" ] || { echo "标签与版本号不一致"; exit 1; }
+          [ -f "docs/releases/$TAG.md" ] || { echo "缺少 docs/releases/$TAG.md"; exit 1; }
+          mkdir -p out
+          find artifacts -type f \( -name '*.exe' -o -name '*.msi' -o -name '*.sig' -o -name 'latest.json' -o -name '*.apk' -o -name '*.aab' -o -name '*.ipa' \) -exec cp {} out/ \;
+          ls -la out
+          for p in "_x64-setup.exe" "_x64_en-US.msi" "_x64-setup.exe.sig" "_x64_en-US.msi.sig" "_android_arm64.apk" "_android_arm64.aab" "_ios_arm64_unsigned.ipa"; do
+            ls out/*"$VER$p" >/dev/null || { echo "缺少 *$VER$p"; exit 1; }
+          done
+          python3 - "$VER" "$TAG" "$GITHUB_REPOSITORY" <<'PY'
+          import json, sys, os
+          ver, tag, repo = sys.argv[1:]
+          j = json.load(open("out/latest.json", encoding="utf-8-sig"))
+          assert j["version"] == ver, j["version"]
+          base = f"https://github.com/{repo}/releases/download/{tag}/"
+          for k, v in j["platforms"].items():
+              assert v["url"].startswith(base) and os.path.exists("out/" + v["url"][len(base):]), v["url"]
+              assert v["signature"], k
+          print("latest.json OK:", ", ".join(j["platforms"]))
+          PY
+          (cd out && sha256sum $(ls | grep -v SHA256SUMS) > SHA256SUMS.txt && cat SHA256SUMS.txt)
+
+      - name: 创建 Release（已存在则失败，不覆盖）
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then echo "Release $TAG 已存在，拒绝覆盖"; exit 1; fi
+          gh release create "$TAG" --verify-tag --latest --title "TeamSync ${TAG#v}" --notes-file "docs/releases/$TAG.md" out/*

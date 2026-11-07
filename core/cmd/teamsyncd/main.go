@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -20,11 +19,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/lan-sync/teamsync/core/internal/activity"
-	"github.com/lan-sync/teamsync/core/internal/api"
+	"github.com/lan-sync/teamsync/core/internal/daemon"
 	"github.com/lan-sync/teamsync/core/internal/engine"
 	"github.com/lan-sync/teamsync/core/internal/rotlog"
-	"github.com/lan-sync/teamsync/core/internal/stclient"
 	"github.com/lan-sync/teamsync/core/internal/team"
 )
 
@@ -178,47 +175,13 @@ func serve(args []string) {
 	if err := eng.Start(ctx); err != nil {
 		log.Fatalf("启动 syncthing 失败: %v", err)
 	}
-	c := stclient.New(eng.BaseURL(), eng.APIKey())
-	ts := &team.Service{C: c}
-	if err := ts.ApplyLANDefaults(ctx); err != nil {
-		log.Printf("应用内网默认配置失败: %v", err)
-	}
-	if *listen != "" {
-		if err := c.PatchOptions(ctx, map[string]any{"listenAddresses": strings.Split(*listen, ",")}); err != nil {
-			log.Printf("设置监听地址失败: %v", err)
-		}
-	}
-	if err := ts.DisableAutoAccept(ctx); err != nil {
-		log.Printf("关闭自动接收失败: %v", err)
-	}
-	store := team.OpenStore(filepath.Join(*home, "settings.json"), *foldersDir)
-	if err := ts.MigrateRemarks(ctx, store); err != nil {
-		log.Printf("迁移成员备注: %v", err)
-	}
-	if err := ts.ApplyFolderDefaults(ctx, store.Get().DefaultBaseDir); err != nil {
-		log.Printf("设置文件夹默认值失败: %v", err)
-	}
-
-	if *token == "" {
-		*token = engine.GenerateAPIKey()
-	}
-	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", *apiPort))
+	d, err := daemon.Start(daemon.Options{Home: *home, FoldersDir: *foldersDir, Listen: *listen, APIPort: *apiPort, Token: *token, Engine: daemon.ProcessEngine{Engine: eng}})
 	if err != nil {
 		log.Fatal(err)
 	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	srv := api.New(c, *token, func() string { return string(eng.State()) }, store)
-	srv.Activity = activity.Open(filepath.Join(*home, "activity.json"))
-	defer srv.Activity.Flush()
-	eng.OnState = func(s engine.State) {
-		srv.Publish(api.UIEvent{Type: "EngineState", Time: time.Now(), Data: map[string]string{"state": string(s)}})
-	}
-	go srv.RunEventBridge(ctx)
-	go srv.RunOverlapGuard(ctx, api.GuardInterval())
-	hs := &http.Server{Handler: srv.Handler()}
-	go hs.Serve(ln)
+	port := d.Port
 
-	info, _ := json.Marshal(daemonInfo{Port: port, Token: *token, PID: os.Getpid()})
+	info, _ := json.Marshal(daemonInfo{Port: port, Token: d.Token, PID: os.Getpid()})
 	infoPath := filepath.Join(*home, "daemon.json")
 	_ = os.WriteFile(infoPath, info, 0o600)
 	fmt.Printf("TEAMSYNCD_READY %d\n", port)
@@ -233,10 +196,7 @@ func serve(args []string) {
 	log.Print("正在关闭...")
 	cancel()
 	// 先停 syncthing，再关闭本地 API：API 端口关闭即表示 syncthing 已退出（安装更新时据此判断）
-	eng.Stop(10 * time.Second)
-	sctx, scancel := context.WithTimeout(context.Background(), 3*time.Second)
-	hs.Shutdown(sctx)
-	scancel()
+	d.Shutdown(10 * time.Second)
 	os.Remove(infoPath)
 }
 
