@@ -53,6 +53,13 @@ jobs:
         run: |
           npx tauri ios init --ci
           cp src-tauri/icons/ios/*.png src-tauri/gen/apple/Assets.xcassets/AppIcon.appiconset/
+          # Go 内核（c-archive）使用系统 DNS 解析器 res_9_*，静态库无法自带链接参数，需在 Xcode 工程中链接 libresolv
+          cd src-tauri/gen/apple
+          python3 -c "import re,io;p='project.yml';s=open(p).read();s=s if 'libresolv.tbd' in s else s.replace('      - sdk: WebKit.framework\n','      - sdk: WebKit.framework\n      - sdk: libresolv.tbd\n',1);open(p,'w').write(s)"
+          grep -n 'libresolv.tbd' project.yml
+          command -v xcodegen >/dev/null || brew install xcodegen
+          xcodegen generate --spec project.yml
+          grep -q 'libresolv.tbd' *.xcodeproj/project.pbxproj
 
       - name: 构建未签名 IPA
         working-directory: app
