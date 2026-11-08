@@ -34,11 +34,21 @@ for n in A B C; do start $n; done
 for n in A B C; do until [ -f "$W/$n/daemon.json" ]; do sleep 0.5; done; done
 id(){ "$T" status --home "$W/$1" | sed -n 's/.*"myID": "\(.*\)".*/\1/p'; }
 IA=$(id A); IB=$(id B); IC=$(id C)
-wait_for(){ for i in $(seq 1 ${3:-90}); do if eval "$1"; then echo "✔ $2"; return 0; fi; sleep 1; done; echo "✘ $2"; exit 1; }
+wait_for(){ for i in $(seq 1 ${3:-90}); do if eval "$1"; then echo "✔ $2"; return 0; fi; sleep 1; done; echo "✘ $2"
+  for n in A B C; do for f in "$W/$n.log" "$W/$n/syncthing.log"; do [ -f "$f" ] && { echo "--- $f"; tail -n 15 "$f"; }; done; done; exit 1; }
 t(){ local n=$1; shift; "$T" "$@" --home "$W/$n"; }
 
+if [ -n "${E2E_STATIC_ADDR:-}" ]; then
+  # 运行环境不允许局域网广播发现时（例如 CI 的 macOS runner）：A 按地址添加 B、C（与 iPhone 手动地址配对相同的接口）
+  api(){ local n=$1; shift; curl -fsS -H "Authorization: Bearer $(python3 -c "import json;print(json.load(open('$W/$n/daemon.json'))['token'])")" \
+    "$(python3 -c "import json;print('http://127.0.0.1:%d'%json.load(open('$W/$n/daemon.json'))['port'])")$@"; }
+  api A /api/devices -X POST -d "{\"deviceID\":\"$IB\",\"name\":\"李四\",\"address\":\"127.0.0.1:${PORT[B]}\"}" >/dev/null
+  api A /api/devices -X POST -d "{\"deviceID\":\"$IC\",\"name\":\"王五\",\"address\":\"127.0.0.1:${PORT[C]}\"}" >/dev/null
+  echo "（E2E_STATIC_ADDR：按地址添加成员，不依赖局域网广播发现）"
+else
 "$T" add-device "$IB" 李四 --home "$W/A" >/dev/null
 "$T" add-device "$IC" 王五 --home "$W/A" >/dev/null
+fi
 wait_for "t B nearby | grep -q '\"pending\": true'" "B 收到 A 的配对请求"
 wait_for "t C nearby | grep -q '\"pending\": true'" "C 收到 A 的配对请求"
 t B accept "$IA" >/dev/null; t C accept "$IA" >/dev/null
