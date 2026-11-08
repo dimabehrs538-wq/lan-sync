@@ -27,11 +27,12 @@ cd "$TMP/syncthing"
 [ "$(cat RELEASE)" = "$VER" ] || { echo "源码版本 $(cat RELEASE) 与 $VER 不一致"; exit 1; }
 # 使用源码自带的 vendor 目录离线编译；noupgrade：禁用自升级（内核另外设置 STNOUPGRADE=1）
 [ "$(uname -s)" = Darwin ] || { echo "需要在 macOS 上编译（cgo + FSEvents）"; exit 1; }
-CARCH="$( [ "$ARCH" = arm64 ] && echo arm64 || echo x86_64 )"
 MIN="${MACOSX_DEPLOYMENT_TARGET:-12.0}"
+# go 在 darwin 上会按 GOARCH 自动给 clang 加 -arch（Apple Silicon 上可交叉编译 x86_64），这里不再重复指定
 export MACOSX_DEPLOYMENT_TARGET="$MIN" CGO_ENABLED=1 \
-  CGO_CFLAGS="-arch $CARCH -mmacosx-version-min=$MIN -O2" CGO_LDFLAGS="-arch $CARCH -mmacosx-version-min=$MIN"
-go run build.go -goos darwin -goarch "$ARCH" -cc "clang -arch $CARCH" -no-upgrade build syncthing
+  CGO_CFLAGS="-mmacosx-version-min=$MIN -O2" CGO_LDFLAGS="-mmacosx-version-min=$MIN"
+go run build.go -goos darwin -goarch "$ARCH" -cc clang -no-upgrade build syncthing
+[ "$(lipo -archs syncthing)" = "$( [ "$ARCH" = arm64 ] && echo arm64 || echo x86_64 )" ] || { echo "syncthing 架构错误：$(lipo -archs syncthing)"; exit 1; }
 otool -L syncthing | grep -q CoreServices.framework || { echo "syncthing 未链接 CoreServices（FSEvents 文件监视未编译进来）"; exit 1; }
 TRIPLE="$( [ "$ARCH" = arm64 ] && echo aarch64 || echo x86_64 )-apple-darwin"
 cp syncthing "$OUT/syncthing-$TRIPLE"
