@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# macOS 版 Syncthing：用官方 v2.1.6 源码包（按官方 sha256sum.txt.asc 校验）以 CGO_ENABLED=0 编译，放到 app/src-tauri/binaries。
+# macOS 版 Syncthing：用官方 v2.1.6 源码包（按官方 sha256sum.txt.asc 校验）以 CGO_ENABLED=1 编译（需在 macOS 上运行，Xcode 命令行工具），放到 app/src-tauri/binaries。
+# 必须启用 cgo：Syncthing 的文件监视（FSEvents）只在 darwin+cgo 下编译；CGO_ENABLED=0 时文件监视不可用，
+# 本地改动要等每小时一次的全量扫描才会同步。
 # 原因：官方 syncthing-macos-amd64-v2.1.6 二进制声明的最低系统为 macOS 26（LC_BUILD_VERSION minos=26.0），
 #       在 macOS 12–15 的 Intel Mac 上无法启动；arm64 与 amd64 统一从同一份源码编译，最低系统由 Go 版本决定（Go 1.26 = macOS 12）。
 # 与 Windows / 手机端使用的是同一 Syncthing 版本（v2.1.6），同步协议一致。
@@ -24,7 +26,13 @@ tar xzf "$TMP/$FILE" -C "$TMP"
 cd "$TMP/syncthing"
 [ "$(cat RELEASE)" = "$VER" ] || { echo "源码版本 $(cat RELEASE) 与 $VER 不一致"; exit 1; }
 # 使用源码自带的 vendor 目录离线编译；noupgrade：禁用自升级（内核另外设置 STNOUPGRADE=1）
-CGO_ENABLED=0 go run build.go -goos darwin -goarch "$ARCH" -no-upgrade build syncthing
+[ "$(uname -s)" = Darwin ] || { echo "需要在 macOS 上编译（cgo + FSEvents）"; exit 1; }
+CARCH="$( [ "$ARCH" = arm64 ] && echo arm64 || echo x86_64 )"
+MIN="${MACOSX_DEPLOYMENT_TARGET:-12.0}"
+export MACOSX_DEPLOYMENT_TARGET="$MIN" CGO_ENABLED=1 \
+  CGO_CFLAGS="-arch $CARCH -mmacosx-version-min=$MIN -O2" CGO_LDFLAGS="-arch $CARCH -mmacosx-version-min=$MIN"
+go run build.go -goos darwin -goarch "$ARCH" -cc "clang -arch $CARCH" -no-upgrade build syncthing
+otool -L syncthing | grep -q CoreServices.framework || { echo "syncthing 未链接 CoreServices（FSEvents 文件监视未编译进来）"; exit 1; }
 TRIPLE="$( [ "$ARCH" = arm64 ] && echo aarch64 || echo x86_64 )-apple-darwin"
 cp syncthing "$OUT/syncthing-$TRIPLE"
 cp LICENSE "$OUT/SYNCTHING-LICENSE.txt"

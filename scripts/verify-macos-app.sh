@@ -30,6 +30,8 @@ for f in "$EXE" teamsyncd syncthing; do
 done
 [ "$(ls "$APP/Contents/MacOS" | wc -l | tr -d ' ')" = 3 ] || fail "Contents/MacOS 中有多余文件：$(ls "$APP/Contents/MacOS")"
 "$APP/Contents/MacOS/syncthing" --version | grep -q "v2.1.6" || fail "syncthing 版本不是 v2.1.6"
+otool -L "$APP/Contents/MacOS/syncthing" | grep -q CoreServices.framework || fail "syncthing 未链接 CoreServices：FSEvents 文件监视不可用（需 CGO_ENABLED=1 编译）"
+ok "syncthing 已编译 FSEvents 文件监视（链接 CoreServices.framework）"
 ok "内置 $("$APP/Contents/MacOS/syncthing" --version | head -1)"
 [ -f "$APP/Contents/Resources/SYNCTHING-LICENSE.txt" ] || fail "缺少 Resources/SYNCTHING-LICENSE.txt"
 [ -f "$APP/Contents/Resources/icon.icns" ] || fail "缺少 Resources/icon.icns"
