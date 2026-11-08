@@ -37,6 +37,12 @@ IA=$(id A); IB=$(id B); IC=$(id C)
 wait_for(){ for i in $(seq 1 ${3:-90}); do if eval "$1"; then echo "✔ $2"; return 0; fi; sleep 1; done; echo "✘ $2"
   for n in A B C; do for f in "$W/$n.log" "$W/$n/syncthing.log"; do [ -f "$f" ] && { echo "--- $f"; tail -n 15 "$f"; }; done; done; exit 1; }
 t(){ local n=$1; shift; "$T" "$@" --home "$W/$n"; }
+# 重新邀请是异步的（先移除成员，间隔 5 s 再加回）；移除阶段对方可能因多条连接上集群配置的先后而短暂看到旧邀请，
+# 因此先等 A 完成“移除 → 加回”，再检查对方收到的新邀请
+has_member(){ t A folders | python3 -c "import json,sys; f=[x for x in json.load(sys.stdin) if x['id']=='$1'][0]; sys.exit(0 if any(m['deviceID']=='$2' for m in f['members']) else 1)"; }
+reinvite(){ t A reinvite "$1" "$2" >/dev/null
+  wait_for "! has_member $1 $2" "重新邀请：A 已暂时移除该成员" 15
+  wait_for "has_member $1 $2" "重新邀请：A 已重新加入该成员" 30; }
 
 if [ -n "${E2E_STATIC_ADDR:-}" ]; then
   # 运行环境不允许局域网广播发现时（例如 CI 的 macOS runner）：A 按地址添加 B、C（与 iPhone 手动地址配对相同的接口）
@@ -71,7 +77,7 @@ until [ -f "$W/B/daemon.json" ]; do sleep 0.5; done
 wait_for "t A devices | grep -c '\"connected\": true' | grep -q 2" "B 重启后重新连上 A" 60
 sleep 8
 t B invites | grep -q "$FID" && { echo "✘ 重连后忽略的邀请又出现"; exit 1; } || echo "✔ 重连后忽略的邀请仍然隐藏"
-t A reinvite "$FID" "$IB" >/dev/null
+reinvite "$FID" "$IB"
 wait_for "t B invites | grep -q $FID" "A 重新邀请后 B 再次收到邀请" 60
 
 t B accept-invite "$FID" "$IA" "$W/B-自定义/设计" >/dev/null
@@ -128,7 +134,7 @@ sleep 5
 t B folders | grep -q "$FID" && { echo "✘ 文件夹被自动重建"; exit 1; } || echo "✔ 未被自动重建"
 t B invites | grep -q "$FID" && { echo "✘ 移除后又作为邀请出现"; exit 1; } || echo "✔ 移除后没有再弹出邀请"
 wait_for "t A folders | grep -q '\"remoteState\": \"notSharing\"'" "A 看到 B 未加入（notSharing）" 30
-t A reinvite "$FID" "$IB" >/dev/null
+reinvite "$FID" "$IB"
 wait_for "t B invites | grep -q $FID" "A 重新邀请后 B 收到邀请" 60
 
 # ---- 移除并删除本地文件 ----
