@@ -14,6 +14,8 @@ fail(){ echo "✘ $*"; for f in "$W"/*.log "$W"/node/*.log "$HOME/Library/Applic
 ok(){ echo "✔ $*"; }
 alive(){ kill -0 "$1" 2>/dev/null; }
 st_pid(){ pgrep -f "^$ST serve .*--home=$1/st" | head -1 || true; }
+st_pids(){ pgrep -f "^$ST serve .*--home=$1/st" || true; }
+no_st(){ for i in $(seq 1 20); do [ -z "$(pgrep -f "^$ST serve" || true)" ] && return 0; sleep 0.5; done; return 1; } # 监控进程与工作进程都已退出
 wait_status(){ # home
   for i in $(seq 1 90); do
     if out="$("${RUN[@]}" "$T" status --home "$1" 2>/dev/null)" && echo "$out" | grep -q '"engine": "running"' && echo "$out" | grep -q '"myID"'; then echo "$out"; return 0; fi
@@ -31,27 +33,25 @@ SP="$(st_pid "$H")"; [ -n "$SP" ] || fail "找不到 syncthing 子进程"
 [ "$(lipo -archs "$T")" = "$ARCH" ] && ok "teamsyncd（${ARCH}）启动内置 syncthing v2.1.6，本地 API 正常：$(echo "$S" | grep -o '"myID": "[A-Z0-9-]*"' | cut -c1-30)…"
 kill -TERM "$P"; for i in $(seq 1 30); do alive "$P" || break; sleep 0.5; done
 alive "$P" && fail "teamsyncd 未退出"
-alive "$SP" && fail "teamsyncd 退出后 syncthing 仍在运行"
+no_st || fail "teamsyncd 退出后 syncthing 仍在运行"
 [ ! -f "$H/daemon.json" ] || fail "daemon.json 未清理"
 ok "SIGTERM：teamsyncd 优雅退出，syncthing 一并退出，daemon.json 已清理"
 
-# 2. 孤儿回收
+# 2. 孤儿回收（Syncthing v2 为“监控进程 + 工作进程”两层，两者都要被结束）
 P=$(start "$H" 22611); wait_status "$H" >/dev/null || fail "内核二次启动失败"
-SP="$(st_pid "$H")"; kill -KILL "$P"; sleep 2
-ORPHAN=0
-if alive "$SP"; then
-  [ "$(ps -o ppid= -p "$SP" | tr -d ' ')" = 1 ] || fail "syncthing 未被 launchd 收养"
-  ORPHAN=1
-else
-  echo "（强杀内核后 syncthing 已因输出管道断开自行退出）"
-fi
+OLD="$(st_pids "$H" | tr '\n' ' ')"; [ -n "$OLD" ] || fail "找不到 syncthing 进程"
+kill -KILL "$P"; sleep 2
+LEFT=""; for p in $OLD; do alive "$p" && LEFT="$LEFT $p"; done
+for p in $LEFT; do [ "$(ps -o ppid= -p "$p" | tr -d ' ')" = 1 ] || fail "syncthing（PID ${p}）未被 launchd 收养"; done
+[ -n "$LEFT" ] || echo "（强杀内核后 syncthing 已因输出管道断开自行退出）"
 rm -f "$H/daemon.json"
 P=$(start "$H" 22611); wait_status "$H" >/dev/null || fail "强杀后重新启动内核失败"
-alive "$SP" && fail "旧的孤儿 syncthing（PID ${SP}）未被结束"
-NSP="$(st_pid "$H")"; [ -n "$NSP" ] && [ "$NSP" != "$SP" ] || fail "新 syncthing 未启动"
-if [ $ORPHAN = 1 ]; then ok "孤儿回收：强杀内核后残留的 syncthing（PID ${SP}）在下次启动时被结束，新实例（PID ${NSP}）正常"
+for p in $LEFT; do alive "$p" && fail "旧的孤儿 syncthing（PID ${p}）未被结束"; done
+NSP="$(st_pid "$H")"; [ -n "$NSP" ] || fail "新 syncthing 未启动"
+for p in $OLD; do [ "$p" != "$NSP" ] || fail "新 syncthing PID 与旧进程相同"; done
+if [ -n "$LEFT" ]; then ok "孤儿回收：强杀内核后残留的 syncthing（PID${LEFT}）在下次启动时被结束，新实例（PID ${NSP}）正常"
 else ok "强杀内核后重新启动正常（新 syncthing PID ${NSP}）"; fi
-kill -TERM "$P"; for i in $(seq 1 30); do alive "$P" || break; sleep 0.5; done; alive "$NSP" && fail "syncthing 未退出"
+kill -TERM "$P"; for i in $(seq 1 30); do alive "$P" || break; sleep 0.5; done; no_st || fail "syncthing 未退出"
 
 # 3. 主程序
 HOME_DIR="$HOME/Library/Application Support/TeamSync"
@@ -68,6 +68,6 @@ osascript -e 'tell application id "com.teamsync.desktop" to quit' >/dev/null 2>&
 for i in $(seq 1 40); do alive "$AP" || alive "$CP" || alive "$SP" || break; sleep 0.5; done
 alive "$AP" && fail "TeamSync.app 未退出"
 alive "$CP" && fail "退出后 teamsyncd 仍在运行"
-alive "$SP" && fail "退出后 syncthing 仍在运行"
+no_st || fail "退出后 syncthing 仍在运行"
 ok "退出 TeamSync.app（${HOW}）后 teamsyncd 与 syncthing 均已清理"
 rm -rf "$W"

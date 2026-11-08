@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -37,19 +38,26 @@ func TestFreePort(t *testing.T) {
 	}
 }
 
-func TestIsOrphanOf(t *testing.T) {
+func TestStaleTargets(t *testing.T) {
 	bin := "/Applications/TeamSync.app/Contents/MacOS/syncthing"
-	cases := map[string]bool{
-		"    1 /Applications/TeamSync.app/Contents/MacOS/syncthing\n": true,
-		"  1 /tmp/other/syncthing":                                    true,  // 同名即可（数据目录由 PID 文件限定）
-		"  523 /Applications/TeamSync.app/Contents/MacOS/syncthing":   false, // 仍有父进程：不是孤儿
-		"    1 /usr/bin/vim":                                          false,
-		"":                                                            false,
-		"x y":                                                         false,
+	home := "/Users/a/Library/Application Support/TeamSync/st"
+	args := " serve --no-browser --no-restart --home=" + home + " --gui-address=127.0.0.1:1234"
+	ps := strings.Join([]string{
+		"  100     1 " + bin + args,                              // 被收养的监控进程（记录的 PID）
+		"  104   100 " + bin + args,                              // 其工作进程
+		"  200     1 " + bin + args,                              // 被收养的另一个旧进程（PID 文件丢失时）
+		"  300   250 " + bin + args,                              // 仍有父进程且与记录无关：不处理
+		"  400     1 " + bin + " serve --home=/tmp/other/st",     // 其他数据目录
+		"  500     1 /usr/bin/vim " + home,                       // 其他程序
+		"  600     1 " + bin + " serve --home=" + home + "2 --x", // 数据目录只是前缀相同
+		"  700     1 " + bin + " serve --home=" + home,           // 参数在末尾
+		"garbage",
+	}, "\n")
+	got := fmt.Sprint(staleTargets(ps, bin, home, 100, 999))
+	if got != "[100 104 200 700]" {
+		t.Fatal(got)
 	}
-	for in, want := range cases {
-		if got := isOrphanOf(in, bin); got != want {
-			t.Errorf("%q => %v, want %v", in, got, want)
-		}
+	if got := fmt.Sprint(staleTargets(ps, bin, home, 0, 200)); got != "[100 700]" {
+		t.Fatal(got)
 	}
 }
