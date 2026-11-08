@@ -42,7 +42,8 @@ P=$(start "$H" 22611); wait_status "$H" >/dev/null || fail "内核二次启动�
 OLD="$(st_pids "$H" | tr '\n' ' ')"; [ -n "$OLD" ] || fail "找不到 syncthing 进程"
 kill -KILL "$P"; sleep 2
 LEFT=""; for p in $OLD; do alive "$p" && LEFT="$LEFT $p"; done
-for p in $LEFT; do [ "$(ps -o ppid= -p "$p" | tr -d ' ')" = 1 ] || fail "syncthing（PID ${p}）未被 launchd 收养"; done
+for p in $LEFT; do # 监控进程被 launchd 收养（父进程 1），工作进程的父进程仍是监控进程
+  pp="$(ps -o ppid= -p "$p" | tr -d ' ')"; [ "$pp" = 1 ] || [[ " $OLD " == *" $pp "* ]] || fail "syncthing（PID ${p}）父进程为 ${pp}，未被 launchd 收养"; done
 [ -n "$LEFT" ] || echo "（强杀内核后 syncthing 已因输出管道断开自行退出）"
 rm -f "$H/daemon.json"
 P=$(start "$H" 22611); wait_status "$H" >/dev/null || fail "强杀后重新启动内核失败"
