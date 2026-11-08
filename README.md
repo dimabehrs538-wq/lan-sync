@@ -66,8 +66,8 @@ Release 中提供 Apple Silicon 与 Intel 两种安装包，界面、内核和�
 - **文件夹访问**：团队文件夹放在“文稿 / 桌面 / 下载”、外置磁盘或网络卷中时，系统会询问是否允许访问，请选择允许。建议使用默认位置 `~/TeamSync`。
 - **窗口与菜单栏**：关闭窗口后应用继续在菜单栏同步；点击程序坞图标或菜单栏图标重新打开窗口；⌘Q 或菜单栏“退出”会先安全停止同步引擎再退出。
 - **自动更新**：与 Windows 相同（每 4 小时检查，设置页可手动检查），下载签名的 `.app.tar.gz` 并用内置公钥校验后替换应用并重启；应用所在位置不可写时系统会要求输入管理员密码。由于是 ad-hoc 签名，更新后 macOS 可能再次询问本地网络 / 文件夹访问权限。
-- **Syncthing**：macOS 版内置的 Syncthing v2.1.6 由官方源码包（按官方 `sha256sum.txt.asc` 校验）编译。原因是官方 `syncthing-macos-amd64-v2.1.6` 二进制声明最低系统为 macOS 26，无法在 macOS 12–15 的 Intel Mac 上运行；两种架构统一从同一份源码编译。版本与 Windows / 手机端一致，同步协议相同。
-- **测试情况**：每次构建在 GitHub Actions 的 macOS runner 上校验 Mach-O 架构（主程序、内核、Syncthing）、最低系统版本、Info.plist、ad-hoc 签名（`codesign --verify --deep --strict`）、DMG 内容与更新包结构；并运行冒烟测试（启动 .app 内的内核与 Syncthing、强杀后残留进程回收、启动主程序并通过 Apple 事件退出后进程全部清理）、macOS 上的 Go 单元测试和三节点同步端到端测试（Apple Silicon）。Intel 包在 Apple Silicon runner 上通过 Rosetta 2 运行冒烟测试。**尚未在真实 Mac 上做界面验收。**
+- **Syncthing**：macOS 版内置的 Syncthing v2.1.6 由官方源码包（按官方 `sha256sum.txt.asc` 校验）编译。原因是官方 `syncthing-macos-amd64-v2.1.6` 二进制声明最低系统为 macOS 26，无法在 macOS 12–15 的 Intel Mac 上运行；两种架构统一从同一份源码编译，并启用 cgo 以包含 macOS 的 FSEvents 文件监视（否则本地改动要等每小时一次的扫描才同步）。版本与 Windows / 手机端一致，同步协议相同。
+- **测试情况**：每次构建在 GitHub Actions 的 macOS runner 上校验 Mach-O 架构（主程序、内核、Syncthing）、最低系统版本、Info.plist、ad-hoc 签名（`codesign --verify --deep --strict`）、DMG 内容与更新包结构；并运行冒烟测试（启动 .app 内的内核与 Syncthing、强杀后残留进程回收、启动主程序并通过 Apple 事件退出后进程全部清理）、macOS 上的 Go 单元测试和三节点同步端到端测试（Apple Silicon；runner 上局域网广播发现不可用，测试中按地址添加成员，因此**局域网自动发现未在 macOS 上验证**）。Intel 包在 Apple Silicon runner 上通过 Rosetta 2 运行冒烟测试。**尚未在真实 Mac 上做界面验收。**
 
 ## 目录结构
 
