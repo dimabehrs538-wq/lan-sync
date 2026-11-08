@@ -104,10 +104,12 @@ jobs:
         if: matrix.arch == 'arm64'
         timeout-minutes: 20
         run: |
-          brew list coreutils >/dev/null 2>&1 || brew install coreutils
+          # 脚本使用 GNU coreutils 与 bash 4+ 的关联数组；macOS 自带 bash 为 3.2
+          for f in coreutils bash; do brew list "$f" >/dev/null 2>&1 || brew install "$f"; done
+          BASH4="$(brew --prefix bash)/bin/bash"
           export PATH="$(brew --prefix coreutils)/libexec/gnubin:$(brew --prefix)/bin:$PATH"
-          bash --version | head -1
-          bash scripts/e2e-two-nodes.sh
+          "$BASH4" --version | head -1
+          "$BASH4" scripts/e2e-two-nodes.sh
 
       - name: 整理产物（按版本和架构命名更新包）
         run: |
