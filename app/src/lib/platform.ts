@@ -22,6 +22,11 @@ export const isIOS = forced === "ios" || (!isAndroid && isTauri() && /iPhone|iPa
 export const isMobile = isAndroid || isIOS;
 /** 桌面 App（Windows/macOS/Linux） */
 export const isDesktop = isTauri() && !isMobile;
+/** macOS 桌面 App（文案用“访达 / 废纸篓”） */
+export const isMac = isDesktop && /Macintosh|Mac OS X/i.test(ua);
+/** 系统文件管理器与回收站的名称 */
+export const fileManagerName = isMac ? "访达" : "资源管理器";
+export const trashName = isMac ? "废纸篓" : "回收站";
 
 export const android = (): AndroidBridge | undefined => (typeof window !== "undefined" ? window.TeamSyncAndroid : undefined);
 

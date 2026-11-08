@@ -1,6 +1,6 @@
 # TeamSync 团队同步（内网 P2P 文件夹同步）
 
-面向小团队的**纯内网、无服务器**文件夹同步工具（Windows 桌面 + Android + iOS）：每人电脑或手机装一个，团队文件夹里有人新增或修改文档，其他在线成员自动拉取。
+面向小团队的**纯内网、无服务器**文件夹同步工具（Windows / macOS 桌面 + Android + iOS）：每人电脑或手机装一个，团队文件夹里有人新增或修改文档，其他在线成员自动拉取。
 
 - 同步引擎：内嵌官方 [Syncthing](https://syncthing.net) v2.1.6（不自研同步协议），由 Go 内核通过 REST + 事件 API 控制（思路同 SyncTrayzor）
 - 内核：Go（`core/`，`teamsyncd`），作为 Tauri sidecar 运行，对前端暴露本地 HTTP API
@@ -23,17 +23,17 @@
 
 | 功能 | 说明 |
 |---|---|
-| 引擎管理 | 隐藏启动 syncthing（`--no-browser --no-restart`），REST 仅监听 `127.0.0.1` 随机端口，每次启动随机 API Key（`STGUIAPIKEY`），`STNOUPGRADE=1` 禁止自升级；崩溃自动重启（指数退避）；退出时先 REST shutdown，超时再强杀；Windows 用 Job Object、Linux 用 Pdeathsig 保证不留孤儿进程 |
+| 引擎管理 | 隐藏启动 syncthing（`--no-browser --no-restart`），REST 仅监听 `127.0.0.1` 随机端口，每次启动随机 API Key（`STGUIAPIKEY`），`STNOUPGRADE=1` 禁止自升级；崩溃自动重启（指数退避）；退出时先 REST shutdown，超时再强杀；Windows 用 Job Object、Linux 用 Pdeathsig 保证不留孤儿进程；macOS 记录 syncthing PID，内核被强杀后下次启动先结束残留进程 |
 | 团队文件夹 | 新建时勾选要邀请的成员（默认全选），之后可随时"管理成员"增删；默认开启实时文件监视（fsWatcher）和简单版本控制（保留 10 份/30 天）；写入默认忽略规则（Office 临时文件 `~$*`、`*.tmp` 等） |
 | 邀请制共享 | **不会自动接收**任何文件夹：别人共享的文件夹以"邀请"出现在“团队文件夹”页（侧栏徽标 + 系统通知），显示邀请人和文件夹名；"接受"时选择本机保存位置（默认 = 设置里的默认位置/文件夹名），"忽略"后不再提醒；文件夹卡片上显示每位成员"已加入/待接受"，对方忽略过也可点"重新邀请"再次发出 |
-| 移除文件夹 | 文件夹卡片"…"菜单 → 移除：默认"仅停止同步（保留本地文件）"；或"同时删除本地文件"（需输入文件夹名确认，移到回收站：Windows 回收站 / Linux 废纸篓 / macOS 废纸篓；可选回收站不可用时永久删除）。只影响本机，其他成员继续同步并看到你"未加入"；移除后不会被自动重建，对方重新邀请时以邀请出现 |
+| 移除文件夹 | 文件夹卡片"…"菜单 → 移除：默认"仅停止同步（保留本地文件）"；或"同时删除本地文件"（需输入文件夹名确认，移到回收站：Windows 回收站 / Linux 废纸篓 / macOS 废纸篓（macOS 15 起使用系统 `trash` 命令，外置磁盘也可“放回原处”）；可选回收站不可用时永久删除）。只影响本机，其他成员继续同步并看到你"未加入"；移除后不会被自动重建，对方重新邀请时以邀请出现 |
 | 局域网配对 | 显示本机设备 ID；"附近设备"列出局域网发现到的设备和请求加入的设备，点"添加/同意"即可 |
 | 状态与通知 | 概览（同步状态/在线成员/文件夹数）、文件夹列表（状态、文件数、暂停/扫描）、成员在线状态；"张三 修改了 设计/接口.md"类动态与系统通知；托盘提示同步状态 |
 | 只读共享 | 新建文件夹或"共享设置"里选"只读共享"：只有创建者的修改会同步，成员自动以只读方式加入（卡片显示"只读"）；成员本机改动不会传出，可一键"恢复为共享版本"，创建者可"以我的版本为准"；模式可随时切换，成员端自动跟随；只有共享者（新建者 / 你接受的邀请人，记录在本机且不可更改）能切换模式，成员伪造的模式文件会被忽略，详见 [docs/ownership.md](docs/ownership.md) |
 | 删除保护 / 历史版本 | 每个文件夹可单独开关（默认开启）：被他人删除或覆盖的文件在本机保留旧版本；动态里显示"成员 X 删除了 路径"并可一键恢复；"历史版本"页支持搜索、只看已删除、查看每个版本的时间和大小，并可恢复 / 打开 / 在文件夹中显示；保留规则可配置：设置页的默认值（保留份数 1–100，默认 10；保留天数 1–365，默认 30；每个文件夹的历史版本总容量上限，默认 2 GB），单个文件夹可在"…"菜单 →"历史版本设置"中自定义；超出时内核定期（及收到修改后）从最旧的版本开始删除，并显示当前占用和"立即清理" |
-| 打开文件夹 | 卡片"…"菜单第一项"打开文件夹"，或直接点击路径，在资源管理器中打开；文件夹不存在时给出提示 |
+| 打开文件夹 | 卡片"…"菜单第一项"打开文件夹"，或直接点击路径，在资源管理器（macOS：访达）中打开；文件夹不存在时给出提示 |
 | 冲突中心 | 扫描 `*.sync-conflict-*` 副本，选择保留原文件或冲突版本 |
-| 托盘/自启 | 关闭窗口最小化到托盘；单实例；开机自启（`--minimized` 只驻留托盘） |
+| 托盘/自启 | 关闭窗口最小化到托盘（macOS：菜单栏模板图标，点击程序坞图标重新打开窗口，⌘Q 退出）；单实例；开机自启（`--minimized` 只驻留托盘；macOS 为登录项 LaunchAgent） |
 
 ## Android / iOS（0.4.0 起）
 
@@ -47,6 +47,27 @@
 | 文件夹 | 浏览 / 导入 | 设置 |
 |---|---|---|
 | ![](docs/screenshot-mobile-folders.png) | ![](docs/screenshot-mobile-files.png) | ![](docs/screenshot-mobile-settings.png) |
+
+## macOS（0.4.1 起）
+
+Release 中提供 Apple Silicon 与 Intel 两种安装包，界面、内核和同步协议与 Windows 版完全相同，可与 Windows / Android / iOS 成员互通。
+
+| 你的 Mac | 下载 |
+|---|---|
+| Apple 芯片（M1 / M2 / M3 / M4 …） | `TeamSync_<版本>_aarch64.dmg` |
+| Intel 芯片 | `TeamSync_<版本>_x64.dmg` |
+
+- **最低系统**：macOS 12 Monterey（内核与 Syncthing 用 Go 1.26 编译，Go 要求 macOS 12+）。
+- **首次打开（未公证）**：本项目没有 Apple 开发者证书，应用只做了 **ad-hoc 代码签名、未经 Apple 公证**，首次打开会提示“无法验证开发者”或“已损坏”：
+  1. 打开 DMG，把 **TeamSync** 拖到“应用程序”（请从“应用程序”中运行，自动更新需要替换该位置的应用）；
+  2. 在“应用程序”中**右键（或按住 Control 点按）TeamSync → 打开 → 打开**；macOS 15 起若没有“打开”按钮：先双击一次，再到 **系统设置 → 隐私与安全性**，在底部点 **“仍要打开”** 并输入密码；
+  3. 仍提示“已损坏”时，在终端执行 `xattr -dr com.apple.quarantine /Applications/TeamSync.app` 后再打开。
+- **本地网络**：macOS 15 起首次运行会询问“允许 TeamSync 查找本地网络上的设备”，请选择 **允许**（可在 系统设置 → 隐私与安全性 → 本地网络 中修改），否则无法发现和连接同事。开启了防火墙时还会询问是否允许 `syncthing` 接受传入连接，请选择允许。
+- **文件夹访问**：团队文件夹放在“文稿 / 桌面 / 下载”、外置磁盘或网络卷中时，系统会询问是否允许访问，请选择允许。建议使用默认位置 `~/TeamSync`。
+- **窗口与菜单栏**：关闭窗口后应用继续在菜单栏同步；点击程序坞图标或菜单栏图标重新打开窗口；⌘Q 或菜单栏“退出”会先安全停止同步引擎再退出。
+- **自动更新**：与 Windows 相同（每 4 小时检查，设置页可手动检查），下载签名的 `.app.tar.gz` 并用内置公钥校验后替换应用并重启；应用所在位置不可写时系统会要求输入管理员密码。由于是 ad-hoc 签名，更新后 macOS 可能再次询问本地网络 / 文件夹访问权限。
+- **Syncthing**：macOS 版内置的 Syncthing v2.1.6 由官方源码包（按官方 `sha256sum.txt.asc` 校验）编译。原因是官方 `syncthing-macos-amd64-v2.1.6` 二进制声明最低系统为 macOS 26，无法在 macOS 12–15 的 Intel Mac 上运行；两种架构统一从同一份源码编译。版本与 Windows / 手机端一致，同步协议相同。
+- **测试情况**：每次构建在 GitHub Actions 的 macOS runner 上校验 Mach-O 架构（主程序、内核、Syncthing）、最低系统版本、Info.plist、ad-hoc 签名（`codesign --verify --deep --strict`）、DMG 内容与更新包结构；并运行冒烟测试（启动 .app 内的内核与 Syncthing、强杀后残留进程回收、启动主程序并通过 Apple 事件退出后进程全部清理）、macOS 上的 Go 单元测试和三节点同步端到端测试（Apple Silicon）。Intel 包在 Apple Silicon runner 上通过 Rosetta 2 运行冒烟测试。**尚未在真实 Mac 上做界面验收。**
 
 ## 目录结构
 
@@ -93,11 +114,11 @@ app/icon-src/         图标源文件（icon.svg 应用图标、tray.svg 托盘�
 
 TeamSync 使用 `tauri-plugin-updater` 从 GitHub Releases 自动更新：启动 15 秒后及每 4 小时检查一次
 `https://github.com/dimabehrs538-wq/lan-sync/releases/latest/download/latest.json`（设置页可关闭自动检查或手动"检查更新"）。
-发现新版本时弹出中文对话框（版本号 + 更新说明），点"立即更新"后下载（带进度条）→ 停止内核与 Syncthing → 运行 NSIS 安装程序（passive 模式）→ 自动重启。
+发现新版本时弹出中文对话框（版本号 + 更新说明），点"立即更新"后下载（带进度条）→ 停止内核与 Syncthing → 运行 NSIS 安装程序（passive 模式；macOS 为替换 TeamSync.app）→ 自动重启；安装失败时自动重新启动内核。
 
 发布步骤：
 
-1. 把版本号同步改到三处：`app/package.json`、`app/src-tauri/Cargo.toml`、`app/src-tauri/tauri.conf.json`（工作流会检查标签与 `tauri.conf.json` 一致）；
+1. 把版本号同步改到三处：`app/package.json`、`app/src-tauri/Cargo.toml`、`app/src-tauri/tauri.conf.json`（并更新 `package-lock.json` / `Cargo.lock` 中本项目的版本；工作流会检查标签与 `tauri.conf.json` 一致）；
 2. 提交并推送到 `main`；
 3. 打带说明的标签并推送，标签说明即更新对话框里显示的"更新说明"：
    ```bash
@@ -105,7 +126,7 @@ TeamSync 使用 `tauri-plugin-updater` 从 GitHub Releases 自动更新：启动
    git push origin v0.2.1
    ```
 4. 另外需要新增 `docs/releases/<标签>.md` 作为 Release 页面说明；
-5. 标签触发 `.github/workflows/release.yml`：并行构建 Windows（签名的 NSIS/MSI + `latest.json`）、Android（签名 APK/AAB）、iOS（未签名 IPA），全部成功后统一创建一个 Release（附 `SHA256SUMS.txt`）；同名 Release 已存在时失败而不会覆盖。已安装的旧版本随后会提示更新。
+5. 标签触发 `.github/workflows/release.yml`：并行构建 Windows（签名的 NSIS/MSI + `latest.json`）、macOS Apple Silicon / Intel（DMG + 签名的 `.app.tar.gz` 更新包，合并进 `latest.json`）、Android（签名 APK/AAB）、iOS（未签名 IPA），全部成功、且 `latest.json` 中每个更新签名都通过公钥校验后统一创建一个 Release（附 `SHA256SUMS.txt`）；同名 Release 已存在时失败而不会覆盖。已安装的旧版本随后会提示更新。
 
 签名密钥：更新包用 `npx tauri signer generate` 生成的密钥签名，公钥写在 `tauri.conf.json` 的 `plugins.updater.pubkey`，
 私钥及其密码保存在仓库 Secrets `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`（另有离线备份，切勿提交到仓库）。
@@ -144,9 +165,17 @@ New-NetFirewallRule -DisplayName "TeamSync UDP" -Direction Inbound -Protocol UDP
 ## Linux / macOS 构建
 
 ```bash
+# Linux
 scripts/fetch-syncthing.sh            # 默认当前系统，可指定：scripts/fetch-syncthing.sh v2.1.6 windows amd64
 scripts/build-core.sh                 # 可指定：scripts/build-core.sh windows amd64
-cd app && npm install && npx tauri build --bundles deb   # macOS: --bundles dmg
+cd app && npm install && npx tauri build --bundles deb
+
+# macOS（需要 Xcode 命令行工具、Go 1.26+；Intel 把 arm64 / aarch64 换成 amd64 / x86_64）
+scripts/build-syncthing-macos.sh arm64          # 官方源码编译 Syncthing（sha256 校验）
+scripts/build-core.sh macos arm64
+cd app && npm install && npx tauri build --target aarch64-apple-darwin --bundles app,dmg
+cd .. && scripts/verify-macos-app.sh app/src-tauri/target/aarch64-apple-darwin/release/bundle arm64 <版本>   # 结构/架构/签名校验
+scripts/smoke-macos-app.sh app/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/TeamSync.app arm64
 ```
 
 ## 只用内核 / CLI

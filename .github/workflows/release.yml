@@ -1,6 +1,6 @@
-name: 正式发布（Windows + Android + iOS）
+name: 正式发布（Windows + macOS + Android + iOS）
 
-# 推送 v* 标签时：三端分别构建，全部成功后统一创建一个正式 Release。
+# 推送 v* 标签时：四端（macOS 含 Apple Silicon 与 Intel）分别构建，全部成功后统一创建一个正式 Release。
 # 已存在同名 Release 时直接失败，绝不覆盖。说明取自 docs/releases/<标签>.md。
 on:
   push:
@@ -17,6 +17,9 @@ jobs:
   windows:
     uses: ./.github/workflows/build-windows.yml
     secrets: inherit
+  macos:
+    uses: ./.github/workflows/build-macos.yml
+    secrets: inherit
   android:
     uses: ./.github/workflows/build-android.yml
     secrets: inherit
@@ -24,7 +27,7 @@ jobs:
     uses: ./.github/workflows/build-ios.yml
 
   release:
-    needs: [windows, android, ios]
+    needs: [windows, macos, android, ios]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,21 +45,42 @@ jobs:
           [ "$(node -p "require('./app/src-tauri/tauri.conf.json').version")" = "$VER" ] || { echo "标签与版本号不一致"; exit 1; }
           [ -f "docs/releases/$TAG.md" ] || { echo "缺少 docs/releases/$TAG.md"; exit 1; }
           mkdir -p out
-          find artifacts -type f \( -name '*.exe' -o -name '*.msi' -o -name '*.sig' -o -name 'latest.json' -o -name '*.apk' -o -name '*.aab' -o -name '*.ipa' \) -exec cp {} out/ \;
+          find artifacts -type f \( -name '*.exe' -o -name '*.msi' -o -name '*.sig' -o -name 'latest.json' -o -name '*.dmg' -o -name '*.app.tar.gz' -o -name '*.apk' -o -name '*.aab' -o -name '*.ipa' \) -exec cp {} out/ \;
           ls -la out
-          for p in "_x64-setup.exe" "_x64_en-US.msi" "_x64-setup.exe.sig" "_x64_en-US.msi.sig" "_android_arm64.apk" "_android_arm64.aab" "_ios_arm64_unsigned.ipa"; do
+          for p in "_x64-setup.exe" "_x64_en-US.msi" "_x64-setup.exe.sig" "_x64_en-US.msi.sig" "_aarch64.dmg" "_x64.dmg" "_aarch64.app.tar.gz" "_aarch64.app.tar.gz.sig" "_x64.app.tar.gz" "_x64.app.tar.gz.sig" "_android_arm64.apk" "_android_arm64.aab" "_ios_arm64_unsigned.ipa"; do
             ls out/*"$VER$p" >/dev/null || { echo "缺少 *$VER$p"; exit 1; }
           done
+          python3 -c "import cryptography" 2>/dev/null || pip install --quiet --user --break-system-packages cryptography
           python3 - "$VER" "$TAG" "$GITHUB_REPOSITORY" <<'PY'
-          import json, sys, os
+          # 在 Windows 生成的 latest.json 中加入 macOS 两种架构，并用 tauri.conf.json 中的公钥校验全部更新签名
+          import base64, hashlib, json, os, sys
+          from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
           ver, tag, repo = sys.argv[1:]
           j = json.load(open("out/latest.json", encoding="utf-8-sig"))
           assert j["version"] == ver, j["version"]
           base = f"https://github.com/{repo}/releases/download/{tag}/"
+          for arch, label in (("aarch64", "aarch64"), ("x86_64", "x64")):
+              name = f"TeamSync_{ver}_{label}.app.tar.gz"
+              entry = {"signature": open(f"out/{name}.sig").read().strip(), "url": base + name}
+              j["platforms"][f"darwin-{arch}"] = entry
+              j["platforms"][f"darwin-{arch}-app"] = entry
+          json.dump(j, open("out/latest.json", "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+          conf = json.load(open("app/src-tauri/tauri.conf.json", encoding="utf-8"))
+          pub = base64.b64decode(base64.b64decode(conf["plugins"]["updater"]["pubkey"]).decode().strip().splitlines()[-1])
+          keyid, pk = pub[2:10], Ed25519PublicKey.from_public_bytes(pub[10:42])
+          need = {"windows-x86_64", "windows-x86_64-nsis", "windows-x86_64-msi", "darwin-aarch64", "darwin-aarch64-app", "darwin-x86_64", "darwin-x86_64-app"}
+          assert need <= set(j["platforms"]), set(j["platforms"])
           for k, v in j["platforms"].items():
-              assert v["url"].startswith(base) and os.path.exists("out/" + v["url"][len(base):]), v["url"]
-              assert v["signature"], k
-          print("latest.json OK:", ", ".join(j["platforms"]))
+              assert v["url"].startswith(base), v["url"]
+              f = "out/" + v["url"][len(base):]
+              assert os.path.exists(f), f
+              lines = base64.b64decode(v["signature"]).decode().strip().splitlines()
+              raw = base64.b64decode(lines[1]); assert raw[2:10] == keyid, k
+              data = open(f, "rb").read()
+              pk.verify(raw[10:74], hashlib.blake2b(data, digest_size=64).digest() if raw[:2] == b"ED" else data)
+              tc = lines[2].split("trusted comment: ", 1)[1].encode()
+              pk.verify(base64.b64decode(lines[3]), raw[10:74] + tc)
+          print("latest.json OK（签名均通过公钥校验）:", ", ".join(j["platforms"]))
           PY
           (cd out && sha256sum $(ls | grep -v SHA256SUMS) > SHA256SUMS.txt && cat SHA256SUMS.txt)
 

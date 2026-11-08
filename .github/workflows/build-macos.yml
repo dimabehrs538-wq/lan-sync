@@ -1,0 +1,129 @@
+name: 构建 macOS 安装包
+
+# Apple Silicon（arm64）与 Intel（x86_64）分别构建 .dmg 与签名的更新包（.app.tar.gz + .sig）。
+# 正式发布由 release.yml（v* 标签）调用本工作流；这里只构建、校验并上传构件。
+# 没有 Apple Developer 证书：应用为 ad-hoc 代码签名、未经 Apple 公证（与 Tauri 更新签名是两回事）。
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-macos-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin   # Apple Silicon（M 系列）
+            goarch: arm64
+            arch: arm64
+            label: aarch64
+          - target: x86_64-apple-darwin    # Intel
+            goarch: amd64
+            arch: x86_64
+            label: x64
+    runs-on: macos-latest
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "12.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      # Go 1.26 编译的 Mach-O 最低系统为 macOS 12，与 tauri.conf.json 的 minimumSystemVersion 一致
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.2"
+          cache: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri -> target
+          key: ${{ matrix.target }}
+
+      - name: 运行环境
+        run: |
+          sw_vers; uname -m; go version; xcodebuild -version | head -1
+          # Intel 构件在 Apple Silicon runner 上通过 Rosetta 2 运行冒烟测试
+          if [ "${{ matrix.arch }}" = x86_64 ] && ! arch -x86_64 /usr/bin/true 2>/dev/null; then
+            sudo softwareupdate --install-rosetta --agree-to-license
+          fi
+          arch -${{ matrix.arch }} /usr/bin/true && echo "可以运行 ${{ matrix.arch }} 程序"
+
+      - name: Go 单元测试（macOS）
+        if: matrix.arch == 'arm64'
+        working-directory: core
+        run: go test ./...
+
+      - name: 编译 Syncthing v2.1.6（官方源码，sha256 校验）
+        run: ./scripts/build-syncthing-macos.sh ${{ matrix.goarch }}
+
+      - name: 编译 Go 内核
+        run: ./scripts/build-core.sh macos ${{ matrix.goarch }}
+
+      - name: 安装前端依赖
+        working-directory: app
+        run: npm ci
+
+      - name: 构建 Tauri 安装包（.app + .dmg + 更新包）
+        working-directory: app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ] || { echo "缺少 TAURI_SIGNING_PRIVATE_KEY，无法生成签名的更新包"; exit 1; }
+          npx tauri build --target ${{ matrix.target }} --bundles app,dmg
+
+      - name: 校验 .app / .dmg / 更新包（架构、最低系统、ad-hoc 签名、资源）
+        run: |
+          VER=$(node -p "require('./app/src-tauri/tauri.conf.json').version")
+          ./scripts/verify-macos-app.sh app/src-tauri/target/${{ matrix.target }}/release/bundle ${{ matrix.arch }} "$VER"
+
+      - name: 冒烟测试（sidecar 启停、孤儿回收、启动与退出主程序）
+        timeout-minutes: 10
+        run: ./scripts/smoke-macos-app.sh app/src-tauri/target/${{ matrix.target }}/release/bundle/macos/TeamSync.app ${{ matrix.arch }}
+
+      - name: 同步端到端测试（macOS 上三个内核实例互相邀请、同步、移除）
+        if: matrix.arch == 'arm64'
+        timeout-minutes: 20
+        run: |
+          brew list coreutils >/dev/null 2>&1 || brew install coreutils
+          export PATH="$(brew --prefix coreutils)/libexec/gnubin:$(brew --prefix)/bin:$PATH"
+          bash --version | head -1
+          bash scripts/e2e-two-nodes.sh
+
+      - name: 整理产物（按版本和架构命名更新包）
+        run: |
+          set -euo pipefail
+          B=app/src-tauri/target/${{ matrix.target }}/release/bundle
+          VER=$(node -p "require('./app/src-tauri/tauri.conf.json').version")
+          mkdir -p dist-mac
+          cp "$B"/dmg/TeamSync_${VER}_${{ matrix.label }}.dmg dist-mac/
+          cp "$B"/macos/TeamSync.app.tar.gz "dist-mac/TeamSync_${VER}_${{ matrix.label }}.app.tar.gz"
+          cp "$B"/macos/TeamSync.app.tar.gz.sig "dist-mac/TeamSync_${VER}_${{ matrix.label }}.app.tar.gz.sig"
+          ls -la dist-mac
+          shasum -a 256 dist-mac/*
+
+      - name: 上传安装包
+        uses: actions/upload-artifact@v4
+        with:
+          name: TeamSync-macos-${{ matrix.label }}
+          path: dist-mac/*
+          if-no-files-found: error

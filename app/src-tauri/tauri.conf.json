@@ -50,6 +50,12 @@
         "displayLanguageSelector": false
       }
     },
+    "macOS": {
+      "minimumSystemVersion": "12.0",
+      "signingIdentity": "-",
+      "hardenedRuntime": false,
+      "infoPlist": "Info.macos.plist"
+    },
     "createUpdaterArtifacts": true
   },
   "plugins": {

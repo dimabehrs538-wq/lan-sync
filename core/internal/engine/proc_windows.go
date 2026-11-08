@@ -62,3 +62,6 @@ func attachJob(cmd *exec.Cmd) {
 		syscall.CloseHandle(syscall.Handle(ph))
 	}
 }
+
+func recordChild(home string, pid int) {}
+func reapStale(home, binary string)    {}

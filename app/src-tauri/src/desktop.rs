@@ -1,5 +1,6 @@
 //! 桌面端（Windows/macOS/Linux）：以 sidecar 运行 Go 内核 teamsyncd（其再拉起捆绑的 syncthing），
-//! 托盘、单实例、开机自启与自动更新。逻辑与 v0.3.1 相同，仅从 lib.rs 拆分出来。
+//! 托盘、单实例、开机自启与自动更新。macOS 额外处理：菜单栏模板图标、点击程序坞图标重新显示窗口
+//! （⌘Q / 程序坞“退出”走 RunEvent::Exit，同样先优雅停止内核与 syncthing）。
 use std::sync::Mutex;
 
 use tauri::{
@@ -38,6 +39,17 @@ pub async fn stop_core(state: State<'_, AppState>, core: State<'_, CoreInfo>) ->
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
     Ok(false)
+}
+
+/// 更新安装失败时调用：内核已在 stop_core 中停止，这里重新启动，避免停留在“内核未运行”状态直到手动重开。
+/// 内核仍在运行时不做任何事。
+#[tauri::command]
+pub fn start_core(app: AppHandle, state: State<'_, AppState>, core: State<'_, CoreInfo>) -> bool {
+    let mut guard = state.child.lock().unwrap();
+    if guard.is_none() {
+        *guard = spawn_core(&app, &core);
+    }
+    guard.is_some()
 }
 
 /// 前端根据同步状态更新托盘提示
@@ -100,7 +112,7 @@ pub fn run(core: CoreInfo) {
         .manage(core.clone())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![crate::core_info, set_tray_status, stop_core])
+        .invoke_handler(tauri::generate_handler![crate::core_info, set_tray_status, stop_core, start_core])
         .setup(move |app| {
             app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
             let handle = app.handle().clone();
@@ -110,8 +122,14 @@ pub fn run(core: CoreInfo) {
             let open = MenuItem::with_id(app, "open", "打开主界面", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open, &quit])?;
+            // macOS 菜单栏使用单色模板图标（系统按浅色/深色菜单栏自动着色），其他系统使用彩色图标
+            #[cfg(target_os = "macos")]
+            let (tray_icon, template) = (include_bytes!("../icons/tray-template.png").as_slice(), true);
+            #[cfg(not(target_os = "macos"))]
+            let (tray_icon, template) = (include_bytes!("../icons/tray.png").as_slice(), false);
             TrayIconBuilder::with_id("main")
-                .icon(tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))?)
+                .icon(tauri::image::Image::from_bytes(tray_icon)?)
+                .icon_as_template(template)
                 .tooltip("团队同步 - 启动中")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
@@ -151,6 +169,11 @@ pub fn run(core: CoreInfo) {
         .expect("启动 Tauri 失败");
 
     app.run(|handle, event| {
+        // macOS：窗口关闭后只是隐藏（应用继续在菜单栏同步），点击程序坞图标时重新显示主窗口
+        #[cfg(target_os = "macos")]
+        if let RunEvent::Reopen { has_visible_windows: false, .. } = event {
+            show_main(handle);
+        }
         if let RunEvent::Exit = event {
             // 关闭 stdin 让内核优雅退出（REST shutdown syncthing）；给它几秒时间
             // 丢弃 CommandChild 会关闭内核的 stdin，内核据此优雅退出（先 REST shutdown syncthing）

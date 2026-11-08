@@ -6,6 +6,9 @@ VER="${1:-v2.1.6}"
 OS="${2:-$(uname -s | tr A-Z a-z)}"
 ARCH="${3:-amd64}"
 case "$OS" in darwin) OS=macos;; esac
+if [ "$OS" = macos ]; then
+  echo "提示：macOS 安装包使用 scripts/build-syncthing-macos.sh 从官方源码编译（官方 amd64 二进制要求 macOS 26）" >&2
+fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/app/src-tauri/binaries"; mkdir -p "$OUT"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
@@ -21,7 +24,7 @@ echo "下载 $FILE ..."
 curl -fsSL -o "$TMP/$FILE" "$BASE/$FILE"
 curl -fsSL -o "$TMP/sha256sum.txt.asc" "$BASE/sha256sum.txt.asc"
 EXPECTED="$(grep " $FILE\$" "$TMP/sha256sum.txt.asc" | awk '{print $1}')"
-ACTUAL="$(sha256sum "$TMP/$FILE" | awk '{print $1}')"
+ACTUAL="$( (command -v sha256sum >/dev/null && sha256sum "$TMP/$FILE" || shasum -a 256 "$TMP/$FILE") | awk '{print $1}')"
 [ -n "$EXPECTED" ] && [ "$EXPECTED" = "$ACTUAL" ] || { echo "sha256 校验失败"; exit 1; }
 echo "sha256 校验通过"
 cd "$TMP"

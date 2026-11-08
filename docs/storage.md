@@ -1,6 +1,6 @@
 # 本机数据存放位置与上限（v0.2.4）
 
-数据目录默认为 `%APPDATA%\TeamSync`（即 `C:\Users\<用户名>\AppData\Roaming\TeamSync`）。
+数据目录默认为 `%APPDATA%\TeamSync`（即 `C:\Users\<用户名>\AppData\Roaming\TeamSync`）；macOS 为 `~/Library/Application Support/TeamSync`。
 
 | 数据 | Windows 路径 | 是否有上限 |
 |---|---|---|

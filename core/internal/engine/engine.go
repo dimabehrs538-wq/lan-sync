@@ -105,6 +105,7 @@ func (e *Engine) spawn() (*exec.Cmd, error) {
 	if err := os.MkdirAll(e.cfg.Home, 0o700); err != nil {
 		return nil, err
 	}
+	reapStale(e.cfg.Home, e.cfg.Binary)
 	cmd := exec.Command(e.cfg.Binary, e.Args()...)
 	cmd.Env = e.Env()
 	cmd.Stdout = e.cfg.LogOut
@@ -114,6 +115,7 @@ func (e *Engine) spawn() (*exec.Cmd, error) {
 		return nil, err
 	}
 	attachJob(cmd)
+	recordChild(e.cfg.Home, cmd.Process.Pid)
 	return cmd, nil
 }
 

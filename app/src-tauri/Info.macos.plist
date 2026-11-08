@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- macOS 15 起访问局域网需用户授权：TeamSync 内置的 Syncthing 通过局域网广播发现同事并直接连接同步 -->
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>团队同步需要访问本地网络，以发现同一局域网中的同事电脑并直接同步团队文件夹（不经过任何服务器）。</string>
+  <!-- 团队文件夹放在“文稿 / 桌面 / 下载”或外置磁盘、网络卷中时，系统会询问是否允许访问 -->
+  <key>NSDocumentsFolderUsageDescription</key>
+  <string>团队同步需要访问你放在“文稿”中的团队文件夹，才能同步其中的文件。</string>
+  <key>NSDesktopFolderUsageDescription</key>
+  <string>团队同步需要访问你放在“桌面”中的团队文件夹，才能同步其中的文件。</string>
+  <key>NSDownloadsFolderUsageDescription</key>
+  <string>团队同步需要访问你放在“下载”中的团队文件夹，才能同步其中的文件。</string>
+  <key>NSRemovableVolumesUsageDescription</key>
+  <string>团队同步需要访问你放在外置磁盘上的团队文件夹，才能同步其中的文件。</string>
+  <key>NSNetworkVolumesUsageDescription</key>
+  <string>团队同步需要访问你放在网络卷上的团队文件夹，才能同步其中的文件。</string>
+</dict>
+</plist>

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <!-- macOS 菜单栏模板图标：纯黑 + 透明，系统按浅色/深色菜单栏自动着色；同步箭头为镂空 -->
+  <defs>
+    <mask id="cut">
+      <rect width="64" height="64" fill="#fff"/>
+      <g fill="none" stroke="#000" stroke-width="5" stroke-linecap="round"><path d="M23 36 a9 9 0 0 1 16 -5"/><path d="M41 38 a9 9 0 0 1 -16 5"/></g>
+      <path d="M43 25 l-1 10 l-9 -3.5 z M21 49 l1 -10 l9 3.5 z" fill="#000"/>
+    </mask>
+  </defs>
+  <path mask="url(#cut)" d="M4 15 q0-5 5-5 h15 l5 6 h26 q5 0 5 5 v29 q0 5 -5 5 H9 q-5 0 -5 -5 Z" fill="#000"/>
+</svg>

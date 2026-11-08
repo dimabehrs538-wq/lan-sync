@@ -65,6 +65,7 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
 
   const install = async () => {
     if (!update) return;
+    let coreStopped = false;
     try {
       setPhase("downloading");
       let total = 0, done = 0;
@@ -73,13 +74,17 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
         else if (ev.event === "Progress") { done += ev.data.chunkLength; setProgress({ done, total }); }
       });
       setPhase("stopping");
+      coreStopped = true;
       await invoke("stop_core"); // 先停止内核和 syncthing，避免安装时文件被占用
       setPhase("installing");
-      await update.install(); // Windows 上会启动安装程序（passive 模式）并退出本程序
+      // Windows：启动安装程序（passive 模式）并退出本程序；macOS：用新版本替换 TeamSync.app，随后重启
+      await update.install();
       const { relaunch } = await import("@tauri-apps/plugin-process");
       await relaunch();
     } catch (e) {
       setPhase("idle");
+      // 安装失败（如 macOS 上应用不在可写位置）时重新启动内核，继续同步
+      if (coreStopped) await invoke("start_core").catch(() => {});
       toast.error("更新失败", { description: String(e) });
     }
   };

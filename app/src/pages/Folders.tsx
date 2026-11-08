@@ -15,7 +15,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { VersionsDialog } from "@/components/VersionsDialog";
 import { FilesDialog } from "@/components/FilesDialog";
-import { isDesktop, isMobile } from "@/lib/platform";
+import { fileManagerName, isDesktop, isMobile, trashName } from "@/lib/platform";
 import { formatCap, RetentionDialog, retentionText } from "@/components/Retention";
 import { Avatar, Dot, Empty, PageHeader } from "@/components/common";
 import { api, ApiError, formatBytes, isTauri, short, STATE_CN, type Device, type Folder, type FolderMember, type Invitation, type PathInfo, type Retention } from "@/lib/api";
@@ -79,7 +79,7 @@ function MemberPicker({ members, selected, onChange, collapsible }: { members: D
   );
 }
 
-/** 在资源管理器中打开文件夹；文件夹不存在时中文提示 */
+/** 在资源管理器 / 访达中打开文件夹；文件夹不存在时中文提示 */
 async function openFolder(f: Folder) {
   try {
     const info = await checkPath(f.path, f.id);
@@ -326,7 +326,7 @@ function RemoveDialog({ folder, onClose }: { folder: Folder | null; onClose: () 
         </DialogHeader>
         <div className="space-y-2">
           <Option v="keep" icon={<FolderMinus className="size-4" />} title="仅停止同步（保留本地文件）" desc={`本机不再同步，${folder?.path ?? ""} 中的文件原样保留。`} />
-          <Option v="delete" danger icon={<Trash2 className="size-4" />} title="同时删除本地文件" desc={isMobile ? "停止同步并永久删除本机的这个文件夹（手机没有回收站，无法恢复）。其他成员的文件不受影响。" : "停止同步并把本机的这个文件夹移到回收站。其他成员的文件不受影响。"} />
+          <Option v="delete" danger icon={<Trash2 className="size-4" />} title="同时删除本地文件" desc={isMobile ? "停止同步并永久删除本机的这个文件夹（手机没有回收站，无法恢复）。其他成员的文件不受影响。" : `停止同步并把本机的这个文件夹移到${trashName}。其他成员的文件不受影响。`} />
         </div>
         {mode === "delete" && (
           <div className="space-y-3 rounded-lg border border-red-500/30 bg-red-500/5 p-3">
@@ -337,7 +337,7 @@ function RemoveDialog({ folder, onClose }: { folder: Folder | null; onClose: () 
             </div>
             {!isMobile && <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
               <Checkbox checked={permanent} onCheckedChange={(v) => setPermanent(!!v)} />
-              回收站不可用时直接永久删除（无法恢复）
+              {trashName}不可用时直接永久删除（无法恢复）
             </label>}
           </div>
         )}
@@ -349,7 +349,7 @@ function RemoveDialog({ folder, onClose }: { folder: Folder | null; onClose: () 
             let msg = "";
             const done = await run(async () => {
               const r = await api<{ filesDeleted: boolean; trashed: boolean }>("DELETE", `/api/folders/${folder.id}${q}`);
-              msg = !r.filesDeleted ? `已移除「${name}」，本地文件已保留` : r.trashed ? `已移除「${name}」，本地文件已移到回收站` : `已移除「${name}」，本地文件已永久删除`;
+              msg = !r.filesDeleted ? `已移除「${name}」，本地文件已保留` : r.trashed ? `已移除「${name}」，本地文件已移到${trashName}` : `已移除「${name}」，本地文件已永久删除`;
             });
             if (done) { toast.success(msg); onClose(); }
           }}>{mode === "delete" ? <><Trash2 />移除并删除文件</> : <><FolderMinus />移除</>}</Button>
@@ -541,7 +541,7 @@ export default function Folders() {
                       </div>
                       <Tooltip><TooltipTrigger asChild>
                         <button className="mt-0.5 block max-w-full truncate text-left font-mono text-xs text-muted-foreground hover:text-foreground hover:underline" onClick={() => open(f)} data-testid="folder-path">{f.path}</button>
-                      </TooltipTrigger><TooltipContent>{isMobile ? "浏览文件" : "在资源管理器中打开"}</TooltipContent></Tooltip>
+                      </TooltipTrigger><TooltipContent>{isMobile ? "浏览文件" : `在${fileManagerName}中打开`}</TooltipContent></Tooltip>
                       <div className="mt-3 flex items-center gap-3">
                         <Progress value={pct} className={`h-1.5 flex-1 ${pct === 100 ? "[&_[data-slot=progress-indicator]]:bg-emerald-500" : "[&_[data-slot=progress-indicator]]:bg-sky-500"}`} />
                         <span className="w-10 text-right text-xs tabular-nums text-muted-foreground">{pct}%</span>

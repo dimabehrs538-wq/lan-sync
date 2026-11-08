@@ -13,7 +13,7 @@ import { RetentionFields, validateRetention } from "@/components/Retention";
 import { useData } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { useUpdater } from "@/lib/updater";
-import { android, isAndroid, isDesktop, isIOS, isMobile } from "@/lib/platform";
+import { android, isAndroid, isDesktop, isIOS, isMac, isMobile } from "@/lib/platform";
 
 function Row({ icon: Icon, title, desc, children }: { icon: typeof Bell; title: string; desc: string; children?: React.ReactNode }) {
   return (
@@ -110,7 +110,7 @@ export default function Settings() {
       <Card className="mt-4">
         <CardHeader><CardTitle className="text-sm">通用</CardTitle></CardHeader>
         <CardContent>
-          {!isMobile && <><Row icon={Power} title="开机自动启动" desc="登录系统后自动在后台运行，只显示托盘图标">
+          {!isMobile && <><Row icon={Power} title="开机自动启动" desc={`登录系统后自动在后台运行，只显示${isMac ? "菜单栏" : "托盘"}图标`}>
             <Switch checked={auto} disabled={!isTauri()} onCheckedChange={async (v) => {
               const m = await import("@tauri-apps/plugin-autostart");
               try { v ? await m.enable() : await m.disable(); setAuto(v); toast.success(v ? "已开启开机自启" : "已关闭开机自启"); }

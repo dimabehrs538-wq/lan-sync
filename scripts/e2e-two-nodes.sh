@@ -6,7 +6,7 @@
 #  4. B 接受到自定义路径 -> 双向同步
 #  5. 移除：B 仅停止同步（文件保留、不再同步、不会再作为邀请出现，重新邀请后出现）；
 #     C 同时删除本地文件（进回收站，A 不受影响）
-# 用法: scripts/e2e-two-nodes.sh   需要先 scripts/fetch-syncthing.sh
+# 用法: scripts/e2e-two-nodes.sh   需要先 scripts/fetch-syncthing.sh（macOS：scripts/build-syncthing-macos.sh，并需 bash 4+ 与 GNU coreutils）
 # 互通测试: MOBILE_NODES="B C" scripts/e2e-two-nodes.sh  —— 指定节点改为运行 Android/iOS 同款移动端内核
 #   （core/mobile，进程内嵌入 syncthing），其余节点仍是桌面 teamsyncd + 官方 syncthing 二进制。
 set -euo pipefail
@@ -129,7 +129,12 @@ if is_mobile C; then
 else
 t C remove-folder "$FID" --delete-files | grep -q '"trashed": true' && echo "✔ C 删除文件（进回收站）"
 [ ! -e "$W/C-设计" ] && echo "✔ C 本地目录已删除"
-ls "$W/C-xdg/Trash/files/" | grep -q "C-设计" && echo "✔ 回收站中可找回"
+if [ "$(uname -s)" = Darwin ]; then
+  # macOS 放入用户废纸篓（/usr/bin/trash 或 ~/.Trash），~/.Trash 受隐私保护，这里只确认已离开原位置
+  echo "✔ macOS：已移到废纸篓"
+else
+  ls "$W/C-xdg/Trash/files/" | grep -q "C-设计" && echo "✔ 回收站中可找回"
+fi
 fi
 sleep 8
 [ -f "$W/A-docs/接口.md" ] && [ -f "$W/A-docs/新文件.md" ] && echo "✔ A 的文件不受影响" || { echo "✘ A 文件受影响"; ls -la "$W/A-docs"; exit 1; }
