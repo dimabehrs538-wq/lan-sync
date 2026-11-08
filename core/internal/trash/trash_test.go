@@ -5,6 +5,7 @@ package trash
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -96,8 +97,12 @@ func TestUnreadableTrashNoInfiniteLoop(t *testing.T) {
 	os.MkdirAll(filepath.Join(tr, "files"), 0o755)
 	os.MkdirAll(filepath.Join(tr, "info"), 0o755)
 	TrashDir = func() (string, error) { return tr, nil }
-	os.Chmod(filepath.Join(tr, "files"), 0o200) // 无法查找：模拟受隐私保护的 ~/.Trash（EPERM）
-	defer os.Chmod(filepath.Join(tr, "files"), 0o755)
+	locked := filepath.Join(tr, "files")
+	if runtime.GOOS == "darwin" {
+		locked = tr // macOS 直接放在 ~/.Trash 下
+	}
+	os.Chmod(locked, 0o200) // 无法查找：模拟受隐私保护的 ~/.Trash（EPERM）
+	defer os.Chmod(locked, 0o755)
 	d := filepath.Join(root, "b")
 	os.MkdirAll(d, 0o755)
 	done := make(chan struct{})

@@ -27,7 +27,7 @@ H="$W/node"; P=$(start "$H" 22611)
 S="$(wait_status "$H")" || fail "内核未就绪"
 echo "$S" | grep -q '"syncthingVersion": "v2.1.6"' || fail "syncthing 版本：$S"
 SP="$(st_pid "$H")"; [ -n "$SP" ] || fail "找不到 syncthing 子进程"
-[ "$(lipo -archs "$T")" = "$ARCH" ] && ok "teamsyncd（$ARCH）启动内置 syncthing v2.1.6，本地 API 正常：$(echo "$S" | grep -o '"myID": "[A-Z0-9-]*"' | cut -c1-30)…"
+[ "$(lipo -archs "$T")" = "$ARCH" ] && ok "teamsyncd（${ARCH}）启动内置 syncthing v2.1.6，本地 API 正常：$(echo "$S" | grep -o '"myID": "[A-Z0-9-]*"' | cut -c1-30)…"
 kill -TERM "$P"; for i in $(seq 1 30); do alive "$P" || break; sleep 0.5; done
 alive "$P" && fail "teamsyncd 未退出"
 alive "$SP" && fail "teamsyncd 退出后 syncthing 仍在运行"
@@ -46,10 +46,10 @@ else
 fi
 rm -f "$H/daemon.json"
 P=$(start "$H" 22611); wait_status "$H" >/dev/null || fail "强杀后重新启动内核失败"
-alive "$SP" && fail "旧的孤儿 syncthing（PID $SP）未被结束"
+alive "$SP" && fail "旧的孤儿 syncthing（PID ${SP}）未被结束"
 NSP="$(st_pid "$H")"; [ -n "$NSP" ] && [ "$NSP" != "$SP" ] || fail "新 syncthing 未启动"
-if [ $ORPHAN = 1 ]; then ok "孤儿回收：强杀内核后残留的 syncthing（PID $SP）在下次启动时被结束，新实例（PID $NSP）正常"
-else ok "强杀内核后重新启动正常（新 syncthing PID $NSP）"; fi
+if [ $ORPHAN = 1 ]; then ok "孤儿回收：强杀内核后残留的 syncthing（PID ${SP}）在下次启动时被结束，新实例（PID ${NSP}）正常"
+else ok "强杀内核后重新启动正常（新 syncthing PID ${NSP}）"; fi
 kill -TERM "$P"; for i in $(seq 1 30); do alive "$P" || break; sleep 0.5; done; alive "$NSP" && fail "syncthing 未退出"
 
 # 3. 主程序
@@ -61,12 +61,12 @@ S="$(wait_status "$HOME_DIR")" || fail "TeamSync.app 启动后内核未就绪"
 CP="$(pgrep -f "^$T serve" | head -1)"; SP="$(pgrep -f "^$ST serve" | head -1)"
 [ -n "$CP" ] && [ -n "$SP" ] || fail "未找到 teamsyncd / syncthing 进程"
 [ "$(ps -o ppid= -p "$CP" | tr -d ' ')" = "$AP" ] || fail "teamsyncd 不是由 TeamSync.app 启动"
-ok "TeamSync.app 启动：拉起 teamsyncd（PID $CP）与 syncthing（PID $SP），内核 API 正常"
+ok "TeamSync.app 启动：拉起 teamsyncd（PID ${CP}）与 syncthing（PID ${SP}），内核 API 正常"
 HOW="Apple 事件 quit，等同 ⌘Q"
 osascript -e 'tell application id "com.teamsync.desktop" to quit' >/dev/null 2>&1 || { HOW="SIGTERM（osascript 不可用）"; kill -TERM "$AP"; }
 for i in $(seq 1 40); do alive "$AP" || alive "$CP" || alive "$SP" || break; sleep 0.5; done
 alive "$AP" && fail "TeamSync.app 未退出"
 alive "$CP" && fail "退出后 teamsyncd 仍在运行"
 alive "$SP" && fail "退出后 syncthing 仍在运行"
-ok "退出 TeamSync.app（$HOW）后 teamsyncd 与 syncthing 均已清理"
+ok "退出 TeamSync.app（${HOW}）后 teamsyncd 与 syncthing 均已清理"
 rm -rf "$W"

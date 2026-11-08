@@ -15,18 +15,18 @@ pl(){ /usr/libexec/PlistBuddy -c "Print :$1" "$PL"; }
 [ "$(pl LSMinimumSystemVersion)" = "$MINOS" ] || fail "LSMinimumSystemVersion=$(pl LSMinimumSystemVersion)"
 pl NSLocalNetworkUsageDescription >/dev/null || fail "缺少 NSLocalNetworkUsageDescription"
 pl NSDocumentsFolderUsageDescription >/dev/null || fail "缺少 NSDocumentsFolderUsageDescription"
-ok "Info.plist：com.teamsync.desktop $VER，最低 macOS $MINOS，本地网络 / 文件夹访问说明齐全"
+ok "Info.plist：com.teamsync.desktop ${VER}，最低 macOS ${MINOS}，本地网络 / 文件夹访问说明齐全"
 EXE="$(pl CFBundleExecutable)"
 verlte(){ [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" = "$1" ]; }
 for f in "$EXE" teamsyncd syncthing; do
   p="$APP/Contents/MacOS/$f"
   [ -x "$p" ] || fail "缺少可执行文件 Contents/MacOS/$f"
   a="$(lipo -archs "$p")"
-  [ "$a" = "$ARCH" ] || fail "$f 架构为 $a，应为 $ARCH"
+  [ "$a" = "$ARCH" ] || fail "$f 架构为 ${a}，应为 $ARCH"
   m="$(otool -l "$p" | awk '/LC_BUILD_VERSION/{f=1} f&&/minos/{print $2; exit}')"
   [ -n "$m" ] && verlte "$m" "$MINOS" || fail "$f 最低系统 $m 高于 $MINOS"
   codesign -dv "$p" 2>&1 | grep -q "Signature=adhoc" || fail "$f 不是 ad-hoc 签名"
-  ok "Contents/MacOS/$f：Mach-O $a，minos $m，ad-hoc 签名"
+  ok "Contents/MacOS/${f}：Mach-O ${a}，minos ${m}，ad-hoc 签名"
 done
 [ "$(ls "$APP/Contents/MacOS" | wc -l | tr -d ' ')" = 3 ] || fail "Contents/MacOS 中有多余文件：$(ls "$APP/Contents/MacOS")"
 "$APP/Contents/MacOS/syncthing" --version | grep -q "v2.1.6" || fail "syncthing 版本不是 v2.1.6"
