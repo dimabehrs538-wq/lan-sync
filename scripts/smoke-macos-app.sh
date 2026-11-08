@@ -9,7 +9,8 @@ APP="$(cd "$1" && pwd)"; ARCH="$2"
 RUN=(arch "-$ARCH")
 M="$APP/Contents/MacOS"; T="$M/teamsyncd"; ST="$M/syncthing"
 W="$(mktemp -d)"
-fail(){ echo "✘ $*"; for f in "$W"/*.log; do echo "--- $f"; tail -n 30 "$f"; done; exit 1; }
+fail(){ echo "✘ $*"; for f in "$W"/*.log "$W"/node/*.log "$HOME/Library/Application Support/TeamSync"/*.log; do [ -f "$f" ] || continue; echo "--- $f"; tail -n 40 "$f"; done
+  echo "--- 进程"; ps -axo pid,ppid,stat,comm | grep -E 'syncthing|teamsyncd|TeamSync' | grep -v grep || true; exit 1; }
 ok(){ echo "✔ $*"; }
 alive(){ kill -0 "$1" 2>/dev/null; }
 st_pid(){ pgrep -f "^$ST serve .*--home=$1/st" | head -1 || true; }

@@ -3,6 +3,7 @@
 package engine
 
 import (
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,8 +38,10 @@ func reapStale(home, binary string) {
 	}
 	out, err := exec.Command("ps", "-o", "ppid=,comm=", "-p", strconv.Itoa(pid)).Output()
 	if err != nil || !isOrphanOf(string(out), binary) {
+		log.Printf("上次记录的 syncthing PID %d 仍在运行，但不是本程序残留的孤儿进程（%q），不处理", pid, strings.TrimSpace(string(out)))
 		return
 	}
+	log.Printf("结束上次残留的 syncthing 孤儿进程 PID %d", pid)
 	_ = syscall.Kill(pid, syscall.SIGTERM)
 	for i := 0; i < 50; i++ {
 		if syscall.Kill(pid, 0) != nil {
